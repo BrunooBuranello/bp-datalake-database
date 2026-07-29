@@ -388,40 +388,22 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     FROM bronze_zsdbil17_faturamento;
 
 
-    /*
-    =========================================================
-    7.1. CONTAGEM DOS REGISTROS REJEITADOS
-    =========================================================
-    */
+     /* =========================================================
+       7.1. CONTAGEM DOS REGISTROS REJEITADOS
+       ========================================================= */
 
     SELECT COUNT(*)
     INTO v_rejected_rows
     FROM bronze_zsdbil17_faturamento AS b
     WHERE
            b.cfop IS NULL
-        OR b.cfop NOT IN (
-            '5102AA',
-            '6102AA',
-            '6403AA',
-            '5403AA',
-            '6108AA',
-            '6401AA',
-            '5401AA',
-            '6109AA',
-            '5101AA',
-            '6101AA',
-            '5912AA',
-            '6552AA',
-            '6912AA',
-            '6910AA',
-            '6949AA',
-            '6152AA',
-            '5551AA',
-            '5949AA',
-            '5914AA',
-            '5910AA',
-            '5915AA',
-            '6551AA'
+
+        OR NOT EXISTS (
+            SELECT 1
+            FROM dim_cfop AS d
+            WHERE d.cfop = TRIM(b.cfop)
+              AND d.ativo = 1
+              AND d.cfop_car = 'Yes'
         )
 
         OR NULLIF(
@@ -431,12 +413,17 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
 
         OR b.issuance_date IS NULL
 
-        OR b.chave_de_acesso IS NULL
+        OR NULLIF(
+            TRIM(b.chave_de_acesso),
+            ''
+        ) IS NULL
 
-        OR NULLIF(TRIM(b.invoice_number), '') IS NULL
+        OR NULLIF(
+            TRIM(b.invoice_number),
+            ''
+        ) IS NULL
 
         OR TRIM(b.chave_de_acesso) NOT REGEXP '^[0-9]{44}$';
-
     /*
     =========================================================
     8. CARGA BRONZE → SILVER
@@ -468,41 +455,30 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
         FROM bronze_zsdbil17_faturamento AS b
 
     /*
-    =====================================================
+    =========================================================
     REGRAS DE SELEÇÃO E VALIDAÇÃO DA SILVER
-    =====================================================
+    =========================================================
     */
 
-    WHERE b.cfop IN (
-        '5102AA',
-        '6102AA',
-        '6403AA',
-        '5403AA',
-        '6108AA',
-        '6401AA',
-        '5401AA',
-        '6109AA',
-        '5101AA',
-        '6101AA',
-        '5912AA',
-        '6552AA',
-        '6912AA',
-        '6910AA',
-        '6949AA',
-        '6152AA',
-        '5551AA',
-        '5949AA',
-        '5914AA',
-        '5910AA',
-        '5915AA',
-        '6551AA'
+    WHERE EXISTS (
+        SELECT 1
+        FROM dim_cfop AS d
+        WHERE d.cfop = TRIM(b.cfop)
+          AND d.ativo = 1
+          AND d.cfop_car = 'Yes'
     )
 
     -- Chassi obrigatório
-    AND NULLIF(TRIM(b.chassis_serial_number), '') IS NOT NULL
+    AND NULLIF(
+        TRIM(b.chassis_serial_number),
+        ''
+    ) IS NOT NULL
 
     -- Número da nota obrigatório
-    AND NULLIF(TRIM(b.invoice_number), '') IS NOT NULL
+    AND NULLIF(
+        TRIM(b.invoice_number),
+        ''
+    ) IS NOT NULL
 
     -- Data de emissão obrigatória
     AND b.issuance_date IS NOT NULL
@@ -513,8 +489,6 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     ) AS resultado
 
     WHERE resultado.numero_linha = 1;
-
-
     /*
     =========================================================
     8.2. CONTAGEM DOS REGISTROS SELECIONADOS
