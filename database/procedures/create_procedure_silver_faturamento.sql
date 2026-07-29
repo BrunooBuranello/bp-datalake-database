@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     */
 
     chave_de_acesso CHAR(44) NOT NULL,
-    ncm CHAR(8),
+    ncm CHAR(10),
     cfop CHAR(10),
     plant_code VARCHAR(10),
     company_code VARCHAR(12),
@@ -330,6 +330,11 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
 
     ) ENGINE = InnoDB;
 
+    /*
+    =========================================================
+    4.1. ATUALIZAÇÃO DA ESTRUTURA DA SILVER
+    =========================================================
+    */
 
     /*
     =========================================================
@@ -555,47 +560,223 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     8.5. CARGA INCREMENTAL NA SILVER
     =========================================================
     */
-
     INSERT INTO silver_zsdbil17_faturamento (
         id_bronze,
         chassis_serial_number,
         invoice_number,
         issuance_date,
         material,
+        description,
+        descricao_do_produto,
+        descricao_da_cor,
+        manufacturing_year,
+        model_year,
+        total_amount,
+        sold_to_party_code,
+        sold_to_party_cnpj,
+        sold_to_party_name,
+        sold_to_party_state,
+        ship_to_party_code,
+        ship_to_party_cnpj,
+        ship_to_party_name,
+        ship_to_party_state,
+        payment_condition,
         chave_de_acesso,
+        ncm,
         cfop,
+        plant_code,
+        company_code,
+        division,
+        sap_document,
+        sales_order_number,
+        invoice_series,
+        no_do_motor,
+        codigo_da_cor,
+        potencia_motor,
+        cap_trac_max,
+        cilindradas_cc,
+        distancia_entre_eixo,
+        peso_liquido_ton,
+        peso_bruto_ton,
+        tipo_de_veiculo,
+        especie_do_veiculo,
+        tipo_do_combustivel,
+        tipo_de_pintura,
+        condicao_do_veiculo,
+        cap_ocup_max,
+        byd_cnpj_number,
+        vin_condition,
+        code_brand_mode,
+        sales_order_type,
+        item_category,
         dt_carga,
         id_execucao,
         usuario,
         source_file
     )
-    SELECT
-        t.id,
+     SELECT
+        t.id AS id_bronze,
+
         TRIM(t.chassis_serial_number),
         TRIM(t.invoice_number),
         t.issuance_date,
-        t.material,
+        NULLIF(TRIM(t.material), ''),
+
+        NULLIF(TRIM(t.description), ''),
+        NULLIF(TRIM(t.descricao_do_produto), ''),
+        NULLIF(TRIM(t.descricao_da_cor), ''),
+
+
+        CASE
+            WHEN TRIM(t.manufacturing_year) REGEXP '^[0-9]{4}$'
+            THEN CAST(TRIM(t.manufacturing_year) AS UNSIGNED)
+            ELSE NULL
+        END,
+
+        CASE
+            WHEN TRIM(t.model_year) REGEXP '^[0-9]{4}$'
+            THEN CAST(TRIM(t.model_year) AS UNSIGNED)
+            ELSE NULL
+        END,
+
+
+        t.total_amount,
+
+        NULLIF(TRIM(t.sold_to_party_code), ''),
+        NULLIF(TRIM(t.sold_to_party_cnpj), ''),
+        NULLIF(TRIM(t.sold_to_party_name), ''),
+        NULLIF(TRIM(t.sold_to_party_state), ''),
+
+        NULLIF(TRIM(t.ship_to_party_code), ''),
+        NULLIF(TRIM(t.ship_to_party_cnpj), ''),
+        NULLIF(TRIM(t.ship_to_party_name), ''),
+        NULLIF(TRIM(t.ship_to_party_state), ''),
+
+        NULLIF(TRIM(t.payment_condition), ''),
+
         TRIM(t.chave_de_acesso),
-        t.cfop,
+
+        NULLIF(REPLACE(TRIM(t.ncm), '.', ''), ''),
+        NULLIF(TRIM(t.cfop), ''),
+        NULLIF(TRIM(t.plant_code), ''),
+        NULLIF(TRIM(t.company_code), ''),
+        NULLIF(TRIM(t.division), ''),
+        NULLIF(TRIM(t.sap_document), ''),
+        NULLIF(TRIM(t.sales_order_number), ''),
+        NULLIF(TRIM(t.invoice_series), ''),
+
+        NULLIF(TRIM(t.no_do_motor), ''),
+        NULLIF(TRIM(t.codigo_da_cor), ''),
+
+        t.potencia_motor,
+        t.cap_trac_max,
+        t.cilindradas_cc,
+        t.distancia_entre_eixo,
+        t.peso_liquido_ton,
+        t.peso_bruto_ton,
+
+        NULLIF(TRIM(t.tipo_de_veiculo), ''),
+        NULLIF(TRIM(t.especie_do_veiculo), ''),
+        NULLIF(TRIM(t.tipo_do_combustivel), ''),
+        NULLIF(TRIM(t.tipo_de_pintura), ''),
+        NULLIF(TRIM(t.condicao_do_veiculo), ''),
+
+        t.cap_ocup_max,
+
+        NULLIF(TRIM(t.byd_cnpj_number), ''),
+        NULLIF(TRIM(t.vin_condition), ''),
+        NULLIF(TRIM(t.code_brand_mode), ''),
+
+        NULLIF(TRIM(t.sales_order_type), ''),
+        NULLIF(TRIM(t.item_categoy), ''),
+
         t.dt_carga,
         v_execution_id,
         CURRENT_USER(),
-        t.source_file
-    FROM tmp_zsdbil17_latest AS t
+        NULLIF(TRIM(t.source_file), '')
 
+    FROM tmp_zsdbil17_latest t
     ON DUPLICATE KEY UPDATE
-        id_bronze = t.id,
-        chassis_serial_number = TRIM(t.chassis_serial_number),
-        invoice_number = TRIM(t.invoice_number),
-        issuance_date = t.issuance_date,
-        material = t.material,
-        cfop = t.cfop,
-        source_file = t.source_file,
-        dt_carga = t.dt_carga,
-        id_execucao = v_execution_id,
-        usuario = CURRENT_USER();
+    id_bronze = t.id,
+
+    chassis_serial_number = TRIM(t.chassis_serial_number),
+    invoice_number = TRIM(t.invoice_number),
+    issuance_date = t.issuance_date,
+
+    material = NULLIF(TRIM(t.material), ''),
+    description = NULLIF(TRIM(t.description), ''),
+    descricao_do_produto = NULLIF(TRIM(t.descricao_do_produto), ''),
+    descricao_da_cor = NULLIF(TRIM(t.descricao_da_cor), ''),
+
+    manufacturing_year =
+        CASE
+            WHEN TRIM(t.manufacturing_year) REGEXP '^[0-9]{4}$'
+            THEN CAST(TRIM(t.manufacturing_year) AS UNSIGNED)
+            ELSE NULL
+        END,
+
+    model_year =
+        CASE
+            WHEN TRIM(t.model_year) REGEXP '^[0-9]{4}$'
+            THEN CAST(TRIM(t.model_year) AS UNSIGNED)
+            ELSE NULL
+        END,
 
 
+    total_amount = t.total_amount,
+
+    sold_to_party_code = NULLIF(TRIM(t.sold_to_party_code), ''),
+    sold_to_party_cnpj = NULLIF(TRIM(t.sold_to_party_cnpj), ''),
+    sold_to_party_name = NULLIF(TRIM(t.sold_to_party_name), ''),
+    sold_to_party_state = NULLIF(TRIM(t.sold_to_party_state), ''),
+
+    ship_to_party_code = NULLIF(TRIM(t.ship_to_party_code), ''),
+    ship_to_party_cnpj = NULLIF(TRIM(t.ship_to_party_cnpj), ''),
+    ship_to_party_name = NULLIF(TRIM(t.ship_to_party_name), ''),
+    ship_to_party_state = NULLIF(TRIM(t.ship_to_party_state), ''),
+
+    payment_condition = NULLIF(TRIM(t.payment_condition), ''),
+
+    chave_de_acesso = TRIM(t.chave_de_acesso),
+
+    ncm = NULLIF(REPLACE(TRIM(t.ncm), '.', ''), ''),
+    cfop = NULLIF(TRIM(t.cfop), ''),
+    plant_code = NULLIF(TRIM(t.plant_code), ''),
+    company_code = NULLIF(TRIM(t.company_code), ''),
+    division = NULLIF(TRIM(t.division), ''),
+    sap_document = NULLIF(TRIM(t.sap_document), ''),
+    sales_order_number = NULLIF(TRIM(t.sales_order_number), ''),
+    invoice_series = NULLIF(TRIM(t.invoice_series), ''),
+
+    no_do_motor = NULLIF(TRIM(t.no_do_motor), ''),
+    codigo_da_cor = NULLIF(TRIM(t.codigo_da_cor), ''),
+
+    potencia_motor = t.potencia_motor,
+    cap_trac_max = t.cap_trac_max,
+    cilindradas_cc = t.cilindradas_cc,
+    distancia_entre_eixo = t.distancia_entre_eixo,
+    peso_liquido_ton = t.peso_liquido_ton,
+    peso_bruto_ton = t.peso_bruto_ton,
+
+    tipo_de_veiculo = NULLIF(TRIM(t.tipo_de_veiculo), ''),
+    especie_do_veiculo = NULLIF(TRIM(t.especie_do_veiculo), ''),
+    tipo_do_combustivel = NULLIF(TRIM(t.tipo_do_combustivel), ''),
+    tipo_de_pintura = NULLIF(TRIM(t.tipo_de_pintura), ''),
+    condicao_do_veiculo = NULLIF(TRIM(t.condicao_do_veiculo), ''),
+
+    cap_ocup_max = t.cap_ocup_max,
+
+    byd_cnpj_number = NULLIF(TRIM(t.byd_cnpj_number), ''),
+    vin_condition = NULLIF(TRIM(t.vin_condition), ''),
+    code_brand_mode = NULLIF(TRIM(t.code_brand_mode), ''),
+
+    sales_order_type = NULLIF(TRIM(t.sales_order_type), ''),
+    item_category = NULLIF(TRIM(t.item_categoy), ''),
+
+    dt_carga = t.dt_carga,
+    id_execucao = v_execution_id,
+    usuario = CURRENT_USER(),
+    source_file = NULLIF(TRIM(t.source_file), '');
     /*
     =========================================================
     8.6. LIMPEZA DA ÁREA TEMPORÁRIA
