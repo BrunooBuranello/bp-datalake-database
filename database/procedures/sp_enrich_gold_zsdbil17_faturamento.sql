@@ -5,21 +5,116 @@ DROP PROCEDURE IF EXISTS sp_enrich_gold_zsdbil17_faturamento$$
 CREATE PROCEDURE sp_enrich_gold_zsdbil17_faturamento()
 BEGIN
 
+    /*
+    =========================================================
+    VARIÁVEIS
+    =========================================================
+    */
+
     DECLARE v_exists INT DEFAULT 0;
 
     DECLARE v_dealer_updated INT DEFAULT 0;
     DECLARE v_payment_updated INT DEFAULT 0;
     DECLARE v_plant_updated INT DEFAULT 0;
     DECLARE v_origem_updated INT DEFAULT 0;
+    DECLARE v_total_updated INT DEFAULT 0;
+
+    DECLARE v_source_rows BIGINT DEFAULT 0;
+    DECLARE v_execution_id BIGINT DEFAULT NULL;
 
     DECLARE v_started_at DATETIME;
     DECLARE v_finished_at DATETIME;
+
+    DECLARE v_error_code INT;
+    DECLARE v_error_message TEXT;
+
+    /*
+    =========================================================
+    TRATAMENTO DE ERRO
+    =========================================================
+    */
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        GET DIAGNOSTICS CONDITION 1
+            v_error_code = MYSQL_ERRNO,
+            v_error_message = MESSAGE_TEXT;
+
+        SET v_finished_at = NOW();
+
+        IF v_execution_id IS NOT NULL THEN
+
+            UPDATE etl_execution_log
+            SET
+                execution_status = 'ERROR',
+                finished_at = v_finished_at,
+                execution_duration_seconds =
+                    TIMESTAMPDIFF(
+                        SECOND,
+                        v_started_at,
+                        v_finished_at
+                    ),
+                source_rows = v_source_rows,
+                selected_rows = v_source_rows,
+                inserted_rows = 0,
+                updated_rows = (
+                    v_dealer_updated
+                    + v_payment_updated
+                    + v_plant_updated
+                    + v_origem_updated
+                ),
+                rejected_rows = 0,
+                error_code = v_error_code,
+                error_message = v_error_message
+            WHERE id_execution = v_execution_id;
+
+        END IF;
+
+        RESIGNAL;
+    END;
 
     SET v_started_at = NOW();
 
     /*
     =========================================================
-    1. GARANTE A COLUNA STORE_NAME_CRM
+    1. REGISTRA O INÍCIO DA EXECUÇÃO
+    =========================================================
+    */
+
+    INSERT INTO etl_execution_log (
+        procedure_name,
+        source_table,
+        target_table,
+        execution_status,
+        executed_by,
+        started_at,
+        created_at
+    )
+    VALUES (
+        'sp_enrich_gold_zsdbil17_faturamento',
+        'gold_zsdbil17_faturamento',
+        'gold_zsdbil17_faturamento',
+        'RUNNING',
+        CURRENT_USER(),
+        v_started_at,
+        v_started_at
+    );
+
+    SET v_execution_id = LAST_INSERT_ID();
+
+    /*
+    =========================================================
+    2. CONTAGEM DA GOLD
+    =========================================================
+    */
+
+    SELECT COUNT(*)
+    INTO v_source_rows
+    FROM gold_zsdbil17_faturamento;
+
+    /*
+    =========================================================
+    3. GARANTE A COLUNA STORE_NAME_CRM
     =========================================================
     */
 
@@ -37,7 +132,7 @@ BEGIN
 
     /*
     =========================================================
-    2. GARANTE A COLUNA DEALER_GROUP
+    4. GARANTE A COLUNA DEALER_GROUP
     =========================================================
     */
 
@@ -55,7 +150,7 @@ BEGIN
 
     /*
     =========================================================
-    3. GARANTE PAYMENT_CONDITION_DESCRIPTION_DIM
+    5. GARANTE PAYMENT_CONDITION_DESCRIPTION_DIM
     =========================================================
     */
 
@@ -73,7 +168,7 @@ BEGIN
 
     /*
     =========================================================
-    4. GARANTE PLANT_DESCRIPTION
+    6. GARANTE PLANT_DESCRIPTION
     =========================================================
     */
 
@@ -91,7 +186,7 @@ BEGIN
 
     /*
     =========================================================
-    5. GARANTE ORIGEM_CHASSI
+    7. GARANTE ORIGEM_CHASSI
     =========================================================
     */
 
@@ -109,7 +204,7 @@ BEGIN
 
     /*
     =========================================================
-    6. ENRIQUECIMENTO DEALER
+    8. ENRIQUECIMENTO DEALER
     =========================================================
     */
 
@@ -121,21 +216,28 @@ BEGIN
        AND d.status_store = 'Opened Store'
 
     SET
-        g.store_name_crm = NULLIF(TRIM(d.store_name_crm), ''),
-        g.dealer_group = NULLIF(TRIM(d.dealer_group), '')
+        g.store_name_crm =
+            NULLIF(TRIM(d.store_name_crm), ''),
+
+        g.dealer_group =
+            NULLIF(TRIM(d.dealer_group), '')
 
     WHERE NOT (
-        g.store_name_crm <=> NULLIF(TRIM(d.store_name_crm), '')
+        g.store_name_crm
+        <=>
+        NULLIF(TRIM(d.store_name_crm), '')
     )
        OR NOT (
-        g.dealer_group <=> NULLIF(TRIM(d.dealer_group), '')
+        g.dealer_group
+        <=>
+        NULLIF(TRIM(d.dealer_group), '')
     );
 
     SET v_dealer_updated = ROW_COUNT();
 
     /*
     =========================================================
-    7. ENRIQUECIMENTO CONDIÇÃO DE PAGAMENTO
+    9. ENRIQUECIMENTO CONDIÇÃO DE PAGAMENTO
     =========================================================
     */
 
@@ -147,23 +249,32 @@ BEGIN
 
     SET
         g.payment_condition_description_dim =
-            NULLIF(TRIM(d.payment_term_description_bp), '')
+            NULLIF(
+                TRIM(d.payment_term_description_bp),
+                ''
+            )
 
     WHERE NULLIF(TRIM(g.payment_condition), '') IS NOT NULL
       AND TRIM(g.payment_condition) <> '-'
-      AND NULLIF(TRIM(d.payment_term_description_bp), '') IS NOT NULL
+      AND NULLIF(
+              TRIM(d.payment_term_description_bp),
+              ''
+          ) IS NOT NULL
       AND TRIM(d.payment_term_description_bp) <> '-'
       AND NOT (
           g.payment_condition_description_dim
           <=>
-          NULLIF(TRIM(d.payment_term_description_bp), '')
+          NULLIF(
+              TRIM(d.payment_term_description_bp),
+              ''
+          )
       );
 
     SET v_payment_updated = ROW_COUNT();
 
     /*
     =========================================================
-    8. ENRIQUECIMENTO PLANT
+    10. ENRIQUECIMENTO PLANT
     =========================================================
     */
 
@@ -179,19 +290,25 @@ BEGIN
 
     WHERE NULLIF(TRIM(g.plant_code), '') IS NOT NULL
       AND TRIM(g.plant_code) <> '-'
-      AND NULLIF(TRIM(d.plant_description), '') IS NOT NULL
+      AND NULLIF(
+              TRIM(d.plant_description),
+              ''
+          ) IS NOT NULL
       AND TRIM(d.plant_description) <> '-'
       AND NOT (
           g.plant_description
           <=>
-          NULLIF(TRIM(d.plant_description), '')
+          NULLIF(
+              TRIM(d.plant_description),
+              ''
+          )
       );
 
     SET v_plant_updated = ROW_COUNT();
 
     /*
     =========================================================
-    9. IDENTIFICA ORIGEM DO CHASSI
+    11. IDENTIFICA ORIGEM DO CHASSI
     =========================================================
     */
 
@@ -199,12 +316,16 @@ BEGIN
 
     SET g.origem_chassi =
         CASE
-            WHEN LEFT(TRIM(g.chassis_serial_number), 1)
-                 REGEXP '^[A-Za-z]$'
+            WHEN LEFT(
+                TRIM(g.chassis_serial_number),
+                1
+            ) REGEXP '^[A-Za-z]$'
                 THEN 'Importado'
 
-            WHEN LEFT(TRIM(g.chassis_serial_number), 1)
-                 REGEXP '^[0-9]$'
+            WHEN LEFT(
+                TRIM(g.chassis_serial_number),
+                1
+            ) REGEXP '^[0-9]$'
                 THEN 'Nacional'
 
             ELSE NULL
@@ -214,12 +335,16 @@ BEGIN
         g.origem_chassi
         <=>
         CASE
-            WHEN LEFT(TRIM(g.chassis_serial_number), 1)
-                 REGEXP '^[A-Za-z]$'
+            WHEN LEFT(
+                TRIM(g.chassis_serial_number),
+                1
+            ) REGEXP '^[A-Za-z]$'
                 THEN 'Importado'
 
-            WHEN LEFT(TRIM(g.chassis_serial_number), 1)
-                 REGEXP '^[0-9]$'
+            WHEN LEFT(
+                TRIM(g.chassis_serial_number),
+                1
+            ) REGEXP '^[0-9]$'
                 THEN 'Nacional'
 
             ELSE NULL
@@ -228,15 +353,53 @@ BEGIN
 
     SET v_origem_updated = ROW_COUNT();
 
+    /*
+    =========================================================
+    12. FINALIZA AS MÉTRICAS
+    =========================================================
+    */
+
+    SET v_total_updated =
+          v_dealer_updated
+        + v_payment_updated
+        + v_plant_updated
+        + v_origem_updated;
+
     SET v_finished_at = NOW();
 
     /*
     =========================================================
-    10. RESULTADO DA EXECUÇÃO
+    13. FINALIZA O LOG COM SUCESSO
+    =========================================================
+    */
+
+    UPDATE etl_execution_log
+    SET
+        execution_status = 'SUCCESS',
+        finished_at = v_finished_at,
+        execution_duration_seconds =
+            TIMESTAMPDIFF(
+                SECOND,
+                v_started_at,
+                v_finished_at
+            ),
+        source_rows = v_source_rows,
+        selected_rows = v_source_rows,
+        inserted_rows = 0,
+        updated_rows = v_total_updated,
+        rejected_rows = 0,
+        error_code = NULL,
+        error_message = NULL
+    WHERE id_execution = v_execution_id;
+
+    /*
+    =========================================================
+    14. RESULTADO DA EXECUÇÃO
     =========================================================
     */
 
     SELECT
+        v_execution_id AS id_execution,
         'SUCCESS' AS execution_status,
         v_started_at AS started_at,
         v_finished_at AS finished_at,
@@ -245,16 +408,12 @@ BEGIN
             v_started_at,
             v_finished_at
         ) AS execution_duration_seconds,
+        v_source_rows AS source_rows,
         v_dealer_updated AS dealer_updated_rows,
         v_payment_updated AS payment_updated_rows,
         v_plant_updated AS plant_updated_rows,
         v_origem_updated AS origem_chassi_updated_rows,
-        (
-            v_dealer_updated
-            + v_payment_updated
-            + v_plant_updated
-            + v_origem_updated
-        ) AS total_updated_rows;
+        v_total_updated AS total_updated_rows;
 
 END$$
 
