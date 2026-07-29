@@ -405,6 +405,15 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
               AND d.ativo = 1
               AND d.cfop_car = 'Yes'
         )
+        OR b.ncm IS NULL
+
+        OR NOT EXISTS (
+            SELECT 1
+            FROM dim_ncm AS n
+            WHERE REPLACE(TRIM(n.ncm), '.', '')
+                = REPLACE(TRIM(b.ncm), '.', '')
+              AND n.ativo = 1
+        )
 
         OR NULLIF(
             TRIM(b.chassis_serial_number),
@@ -466,6 +475,13 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
         WHERE d.cfop = TRIM(b.cfop)
           AND d.ativo = 1
           AND d.cfop_car = 'Yes'
+    )
+    AND EXISTS (
+        SELECT 1
+        FROM dim_ncm AS n
+        WHERE REPLACE(TRIM(n.ncm), '.', '')
+            = REPLACE(TRIM(b.ncm), '.', '')
+          AND n.ativo = 1
     )
 
     -- Chassi obrigatório
