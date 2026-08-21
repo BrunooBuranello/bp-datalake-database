@@ -476,7 +476,15 @@ CREATE TABLE IF NOT EXISTS gold_zsdbil17_faturamento (
         NULLIF(TRIM(s.chassis_serial_number), '') IS NOT NULL
         AND CHAR_LENGTH(TRIM(s.chassis_serial_number)) = 17
         AND s.issuance_date IS NOT NULL
-        AND TRIM(s.chave_de_acesso) REGEXP '^[0-9]{44}$';
+        AND TRIM(s.chave_de_acesso) REGEXP '^[0-9]{44}$'
+
+        -- Regra de negócio:
+        -- destinos internos/ativos que não devem compor o report
+        AND TRIM(s.ship_to_party_code) NOT IN (
+            'CBYDBR08',
+            'CBYDBR0K',
+            'CBYDBR70'
+        );
 
 
     /*
