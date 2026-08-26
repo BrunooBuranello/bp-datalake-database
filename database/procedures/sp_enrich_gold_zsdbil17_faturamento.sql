@@ -461,9 +461,9 @@ BEGIN
 
     UPDATE gold_zsdbil17_faturamento AS g
 
-    INNER JOIN bp_datalake.dim_sales_order_type AS d
+    LEFT JOIN bp_datalake.dim_sales_order_type AS d
         ON TRIM(g.division) =
-           TRIM(d.sales_order_type)
+            TRIM(d.sales_order_type)
 
     SET
         g.division_description =
@@ -473,17 +473,7 @@ BEGIN
             )
 
     WHERE
-        NULLIF(
-            TRIM(g.division),
-            ''
-        ) IS NOT NULL
-
-        AND NULLIF(
-            TRIM(d.sales_order_type_description),
-            ''
-        ) IS NOT NULL
-
-        AND NOT (
+        NOT (
             g.division_description
             <=>
             NULLIF(
@@ -493,7 +483,6 @@ BEGIN
         );
 
     SET v_division_updated = ROW_COUNT();
-
 
     /*
     =========================================================
