@@ -30,6 +30,8 @@ BEGIN
     DECLARE v_error_code INT;
     DECLARE v_error_message TEXT;
 
+    DECLARE v_cfop_updated INT DEFAULT 0;
+
 
     /*
     =========================================================
@@ -70,6 +72,7 @@ BEGIN
                     + v_plant_updated
                     + v_origem_updated
                     + v_division_updated
+                    + v_cfop_updated
                 ),
 
                 rejected_rows = 0,
@@ -461,29 +464,46 @@ BEGIN
 
     UPDATE gold_zsdbil17_faturamento AS g
 
-    LEFT JOIN bp_datalake.dim_sales_order_type AS d
-        ON TRIM(g.division) =
-            TRIM(d.sales_order_type)
+    INNER JOIN bp_datalake.dim_sales_order_type AS d
+        ON TRIM(g.division) = TRIM(d.sales_order_type)
 
     SET
         g.division_description =
-            NULLIF(
-                TRIM(d.sales_order_type_description),
-                ''
-            )
+            NULLIF(TRIM(d.sales_order_type_description), '')
 
     WHERE
-        NOT (
+        NULLIF(TRIM(d.sales_order_type_description), '') IS NOT NULL
+
+        AND NOT (
             g.division_description
             <=>
-            NULLIF(
-                TRIM(d.sales_order_type_description),
-                ''
-            )
+            NULLIF(TRIM(d.sales_order_type_description), '')
         );
 
     SET v_division_updated = ROW_COUNT();
 
+
+    /*
+    =========================================================
+    13.1 FALLBACK DIVISION_DESCRIPTION POR CFOP
+    =========================================================
+    */
+
+    UPDATE gold_zsdbil17_faturamento AS g
+
+    INNER JOIN bp_datalake.dim_cfop_sales_type AS d
+        ON TRIM(g.cfop) = TRIM(d.cfop)
+
+    SET
+        g.division_description =
+            NULLIF(TRIM(d.sales_type), '')
+
+    WHERE
+        NULLIF(TRIM(g.division_description), '') IS NULL
+
+        AND NULLIF(TRIM(d.sales_type), '') IS NOT NULL;
+
+    SET v_cfop_updated = ROW_COUNT();
     /*
     =========================================================
     14. FINALIZA AS MÉTRICAS
@@ -495,7 +515,8 @@ BEGIN
         + v_payment_updated
         + v_plant_updated
         + v_origem_updated
-        + v_division_updated;
+        + v_division_updated
+        + v_cfop_updated;
 
     SET v_finished_at = NOW();
 
@@ -566,6 +587,8 @@ BEGIN
         v_origem_updated AS origem_chassi_updated_rows,
 
         v_division_updated AS division_updated_rows,
+
+        v_cfop_updated AS cfop_fallback_updated_rows,
 
         v_total_updated AS total_updated_rows;
 
