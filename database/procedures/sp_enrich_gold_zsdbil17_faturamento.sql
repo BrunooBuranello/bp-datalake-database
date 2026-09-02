@@ -257,7 +257,6 @@ BEGIN
 
     END IF;
 
-
     /*
     =========================================================
     9. ENRIQUECIMENTO DEALER
@@ -268,44 +267,50 @@ BEGIN
 
     INNER JOIN silver.mapping_dealer_expansion_unic AS d
         ON TRIM(g.ship_to_party_code) =
-           LPAD(CAST(d.sap_code AS CHAR), 10, '0')
-
-       AND d.status_store = 'Opened Store'
+        LPAD(CAST(d.sap_code AS CHAR), 10, '0')
 
     SET
         g.store_name_crm =
-            NULLIF(
-                TRIM(d.store_name_crm),
-                ''
+            COALESCE(
+                NULLIF(TRIM(d.store_name_crm), ''),
+                NULLIF(TRIM(d.store_name), '')
             ),
 
         g.dealer_group =
             NULLIF(
                 TRIM(d.dealer_group),
                 ''
+            ),
+
+        g.brand =
+            NULLIF(
+                TRIM(d.brand),
+                ''
             )
 
     WHERE
         NOT (
-            g.store_name_crm
-            <=>
-            NULLIF(
-                TRIM(d.store_name_crm),
-                ''
-            )
+                g.store_name_crm
+                <=>
+                COALESCE(
+                    NULLIF(TRIM(d.store_name_crm), ''),
+                    NULLIF(TRIM(d.store_name), '')
+                )
         )
 
         OR NOT (
-            g.dealer_group
-            <=>
-            NULLIF(
-                TRIM(d.dealer_group),
-                ''
-            )
+                g.dealer_group
+                <=>
+                NULLIF(TRIM(d.dealer_group), '')
+        )
+
+        OR NOT (
+                g.brand
+                <=>
+                NULLIF(TRIM(d.brand), '')
         );
 
     SET v_dealer_updated = ROW_COUNT();
-
 
     /*
     =========================================================
