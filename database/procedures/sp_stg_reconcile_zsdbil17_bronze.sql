@@ -183,6 +183,9 @@ BEGIN
     DECLARE v_source_rows INT DEFAULT 0;
 
     DECLARE v_inserted_rows INT DEFAULT 0;
+    DECLARE v_refreshed_rows INT DEFAULT 0;
+    DECLARE v_refresh_deleted_rows INT DEFAULT 0;
+
     DECLARE v_active_updated INT DEFAULT 0;
     DECLARE v_cancelled_updated INT DEFAULT 0;
     DECLARE v_missing_updated INT DEFAULT 0;
@@ -206,6 +209,9 @@ BEGIN
 
     -- Documentos completamente novos.
     DECLARE v_new_hashes INT DEFAULT 0;
+
+    -- Documentos existentes substituídos pelo snapshot atual.
+    DECLARE v_refreshed_hashes INT DEFAULT 0;
 
     -- Documentos que desapareceram do snapshot.
     DECLARE v_missing_hashes INT DEFAULT 0;
@@ -298,6 +304,7 @@ BEGIN
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_scope_dates;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_stg_summary;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_existing_summary;
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_refresh_hashes;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_new_hashes;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_bronze_scope;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_missing_hashes;
@@ -393,6 +400,12 @@ BEGIN
 
                 'new_hashes',
                 v_new_hashes,
+
+                'refreshed_hashes',
+                v_refreshed_hashes,
+
+                'refreshed_rows',
+                v_refreshed_rows,
 
                 'missing_hashes',
                 v_missing_hashes,
@@ -889,169 +902,98 @@ BEGIN
 
     /*
     ===========================================================================
-    14. CONFIRMAR DOCUMENTOS ACTIVE
+    14. LISTAR DOCUMENTOS EXISTENTES PARA REFRESH
     ===========================================================================
 
-    Documento:
+    Mesmo hash + mesma quantidade:
+        substitui o conjunto inteiro da Bronze pelo estado atual da staging.
 
-        existe na staging
-        existe na Bronze
-        quantidade igual
-        não está cancelado
-
-    Resultado:
-
-        source_status = ACTIVE
-        last_seen_at  = agora
-        missing_since = NULL
+    first_seen_at é preservado no nível do documento.
     */
 
-    UPDATE bp_datalake.bronze_zsdbil17_faturamento b
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_refresh_hashes;
 
+    CREATE TEMPORARY TABLE tmp_z17_refresh_hashes (
+        reconciliation_hash BINARY(16) NOT NULL,
+        first_seen_at DATETIME NULL,
+        PRIMARY KEY (reconciliation_hash)
+    );
+
+    INSERT INTO tmp_z17_refresh_hashes (
+        reconciliation_hash,
+        first_seen_at
+    )
+    SELECT
+        e.reconciliation_hash,
+        MIN(b.first_seen_at)
+    FROM tmp_z17_existing_summary e
     INNER JOIN tmp_z17_stg_summary s
+        ON s.reconciliation_hash = e.reconciliation_hash
+    INNER JOIN bp_datalake.bronze_zsdbil17_faturamento b
+        ON b.reconciliation_hash = e.reconciliation_hash
+    WHERE e.bronze_item_count > 0
+      AND e.bronze_item_count = s.item_count
+    GROUP BY e.reconciliation_hash;
 
-        ON s.reconciliation_hash =
-           b.reconciliation_hash
+    SELECT COUNT(*)
+    INTO v_refreshed_hashes
+    FROM tmp_z17_refresh_hashes;
 
-    INNER JOIN tmp_z17_existing_summary e
-
-        ON e.reconciliation_hash =
-           b.reconciliation_hash
-
-
-    SET
-        b.source_status = 'ACTIVE',
-
-        b.last_seen_at = NOW(),
-
-        b.missing_since = NULL
-
-
-    WHERE e.bronze_item_count =
-          s.item_count
-
-      AND s.cancelled_count = 0;
-
-
-    SET v_active_updated = ROW_COUNT();
+    SELECT
+        COALESCE(SUM(s.active_count), 0),
+        COALESCE(SUM(s.cancelled_count), 0)
+    INTO
+        v_active_updated,
+        v_cancelled_updated
+    FROM tmp_z17_stg_summary s
+    INNER JOIN tmp_z17_refresh_hashes r
+        ON r.reconciliation_hash = s.reconciliation_hash;
 
 
     /*
     ===========================================================================
-    15. CONFIRMAR DOCUMENTOS CANCELLED
-    ===========================================================================
-
-    O documento continua existindo, mas todas as linhas recebidas
-    apresentam indicação explícita de cancelamento.
-    */
-
-    UPDATE bp_datalake.bronze_zsdbil17_faturamento b
-
-    INNER JOIN tmp_z17_stg_summary s
-
-        ON s.reconciliation_hash =
-           b.reconciliation_hash
-
-    INNER JOIN tmp_z17_existing_summary e
-
-        ON e.reconciliation_hash =
-           b.reconciliation_hash
-
-
-    SET
-        b.source_status = 'CANCELLED',
-
-        b.last_seen_at = NOW(),
-
-        b.missing_since = NULL
-
-
-    WHERE e.bronze_item_count =
-          s.item_count
-
-      AND s.cancelled_count =
-          s.item_count;
-
-
-    SET v_cancelled_updated = ROW_COUNT();
-
-
-    /*
-    ===========================================================================
-    16. LISTAR HASHES NOVOS
+    15. LISTAR HASHES NOVOS
     ===========================================================================
     */
 
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_new_hashes;
 
-
     CREATE TEMPORARY TABLE tmp_z17_new_hashes (
-
         reconciliation_hash BINARY(16) NOT NULL,
-
         PRIMARY KEY (reconciliation_hash)
-
     );
-
 
     INSERT INTO tmp_z17_new_hashes (
         reconciliation_hash
     )
-
-    SELECT
-        reconciliation_hash
-
+    SELECT reconciliation_hash
     FROM tmp_z17_existing_summary
-
     WHERE bronze_item_count = 0;
 
 
     /*
     ===========================================================================
-    17. IDENTIFICAR COLUNAS COMPATÍVEIS PARA INSERT
+    16. IDENTIFICAR COLUNAS COMPATÍVEIS PARA CARGA
     ===========================================================================
-
-    Somente campos existentes nos dois lados são copiados.
-
-    Campos administrativos da Bronze são tratados separadamente.
     */
 
     SELECT
-
         GROUP_CONCAT(
-            CONCAT(
-                '`',
-                s.COLUMN_NAME,
-                '`'
-            )
+            CONCAT('`', s.COLUMN_NAME, '`')
             ORDER BY s.ORDINAL_POSITION
             SEPARATOR ', '
         ),
-
         GROUP_CONCAT(
-            CONCAT(
-                's.`',
-                s.COLUMN_NAME,
-                '`'
-            )
+            CONCAT('s.`', s.COLUMN_NAME, '`')
             ORDER BY s.ORDINAL_POSITION
             SEPARATOR ', '
         )
-
     INTO
         v_insert_columns,
         v_select_columns
-
-
     FROM information_schema.COLUMNS s
-
-
-    WHERE s.TABLE_SCHEMA =
-          'bp_datalake'
-
-      AND s.TABLE_NAME =
-          'stg_zsdbil17_faturamento'
-
+    WHERE s.TABLE_SCHEMA = 'bp_datalake'
+      AND s.TABLE_NAME = 'stg_zsdbil17_faturamento'
       AND s.COLUMN_NAME NOT IN (
           'id',
           'source_status',
@@ -1059,31 +1001,81 @@ BEGIN
           'last_seen_at',
           'missing_since'
       )
-
       AND EXISTS (
-
           SELECT 1
-
           FROM information_schema.COLUMNS b
-
-          WHERE b.TABLE_SCHEMA =
-                'bp_datalake'
-
-            AND b.TABLE_NAME =
-                'bronze_zsdbil17_faturamento'
-
-            AND b.COLUMN_NAME =
-                s.COLUMN_NAME
+          WHERE b.TABLE_SCHEMA = 'bp_datalake'
+            AND b.TABLE_NAME = 'bronze_zsdbil17_faturamento'
+            AND b.COLUMN_NAME = s.COLUMN_NAME
       );
-
 
     IF v_insert_columns IS NULL
        OR v_select_columns IS NULL THEN
-
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT =
             'Reconciliacao Z17 bloqueada: estrutura staging/Bronze incompatível.';
+    END IF;
 
+
+    /*
+    ===========================================================================
+    17. SUBSTITUIR DOCUMENTOS EXISTENTES PELO SNAPSHOT ATUAL
+    ===========================================================================
+    */
+
+    DELETE b
+    FROM bp_datalake.bronze_zsdbil17_faturamento b
+    INNER JOIN tmp_z17_refresh_hashes r
+        ON r.reconciliation_hash = b.reconciliation_hash;
+
+    SET v_refresh_deleted_rows = ROW_COUNT();
+
+    SET v_sql = CONCAT(
+        '
+        INSERT INTO bp_datalake.bronze_zsdbil17_faturamento (
+            ',
+            v_insert_columns,
+            ',
+            source_status,
+            first_seen_at,
+            last_seen_at,
+            missing_since
+        )
+        SELECT
+            ',
+            v_select_columns,
+            ',
+            CASE
+                WHEN TRIM(COALESCE(s.chave_de_acesso, '''')) = ''00''
+                    THEN ''CANCELLED''
+                ELSE ''ACTIVE''
+            END,
+            COALESCE(r.first_seen_at, NOW()),
+            NOW(),
+            NULL
+        FROM bp_datalake.stg_zsdbil17_faturamento s
+        INNER JOIN tmp_z17_refresh_hashes r
+            ON r.reconciliation_hash = s.reconciliation_hash
+        '
+    );
+
+    SET @sql_reconcile_z17 = v_sql;
+
+    PREPARE stmt FROM @sql_reconcile_z17;
+    SET v_stmt_prepared = TRUE;
+
+    EXECUTE stmt;
+
+    SET v_refreshed_rows = ROW_COUNT();
+
+    DEALLOCATE PREPARE stmt;
+    SET v_stmt_prepared = FALSE;
+    SET @sql_reconcile_z17 = NULL;
+
+    IF v_refresh_deleted_rows <> v_refreshed_rows THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT =
+            'Reconciliacao Z17 bloqueada: refresh gerou quantidade diferente entre DELETE e INSERT.';
     END IF;
 
 
@@ -1091,12 +1083,6 @@ BEGIN
     ===========================================================================
     18. INSERIR DOCUMENTOS NOVOS
     ===========================================================================
-
-    Somente hashes inexistentes na Bronze entram aqui.
-
-    Todas as linhas pertencentes ao novo documento são inseridas.
-
-    Nenhuma linha existente é sobrescrita.
     */
 
     SET v_sql = CONCAT(
@@ -1110,66 +1096,35 @@ BEGIN
             last_seen_at,
             missing_since
         )
-
         SELECT
             ',
             v_select_columns,
             ',
-
             CASE
-
-                WHEN TRIM(
-                    COALESCE(
-                        s.chave_de_acesso,
-                        ''''
-                    )
-                ) = ''00''
-
+                WHEN TRIM(COALESCE(s.chave_de_acesso, '''')) = ''00''
                     THEN ''CANCELLED''
-
                 ELSE ''ACTIVE''
-
             END,
-
             NOW(),
             NOW(),
             NULL
-
-
         FROM bp_datalake.stg_zsdbil17_faturamento s
-
         INNER JOIN tmp_z17_new_hashes n
-
-            ON n.reconciliation_hash =
-               s.reconciliation_hash
+            ON n.reconciliation_hash = s.reconciliation_hash
         '
     );
 
+    SET @sql_reconcile_z17 = v_sql;
 
-    SET @sql_reconcile_z17 =
-        v_sql;
-
-
-    PREPARE stmt
-    FROM @sql_reconcile_z17;
-
-
+    PREPARE stmt FROM @sql_reconcile_z17;
     SET v_stmt_prepared = TRUE;
-
 
     EXECUTE stmt;
 
-
-    SET v_inserted_rows =
-        ROW_COUNT();
-
+    SET v_inserted_rows = ROW_COUNT();
 
     DEALLOCATE PREPARE stmt;
-
-
     SET v_stmt_prepared = FALSE;
-
-
     SET @sql_reconcile_z17 = NULL;
 
 
@@ -1357,6 +1312,7 @@ BEGIN
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_scope_dates;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_stg_summary;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_existing_summary;
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_refresh_hashes;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_new_hashes;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_bronze_scope;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_missing_hashes;
@@ -1443,6 +1399,12 @@ BEGIN
             'new_hashes',
             v_new_hashes,
 
+            'refreshed_hashes',
+            v_refreshed_hashes,
+
+            'refreshed_rows',
+            v_refreshed_rows,
+
             'missing_hashes',
             v_missing_hashes,
 
@@ -1508,6 +1470,12 @@ BEGIN
 
         v_new_hashes
             AS hashes_novos,
+
+        v_refreshed_hashes
+            AS hashes_atualizados,
+
+        v_refreshed_rows
+            AS linhas_atualizadas_snapshot,
 
         v_missing_hashes
             AS hashes_missing,
