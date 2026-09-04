@@ -1,4 +1,8 @@
-CREATE DEFINER=`bruno.buranello`@`%` PROCEDURE `bp_datalake`.`sp_process_zsdbil17_pipeline`()
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS bp_datalake.sp_process_zsdbil17_pipeline$$
+
+CREATE PROCEDURE bp_datalake.sp_process_zsdbil17_pipeline()
 BEGIN
 
     DECLARE v_pipeline_execution_id BIGINT DEFAULT NULL;
@@ -134,3 +138,7 @@ BEGIN
         error_message = NULL
 
     WHERE id_execution = v_pipeline_execution_id;
+
+END$$
+
+DELIMITER ;
