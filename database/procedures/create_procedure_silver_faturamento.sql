@@ -26,6 +26,10 @@ BEGIN
     DECLARE v_updated_rows BIGINT DEFAULT 0;
     DECLARE v_rejected_rows BIGINT DEFAULT 0;
 
+    -- Controle para alterações de estrutura compatíveis com versões
+    -- do MySQL que não suportam ADD COLUMN IF NOT EXISTS
+    DECLARE v_column_exists INT DEFAULT 0;
+
     -- Informações do erro
     DECLARE v_sqlstate CHAR(5) DEFAULT NULL;
     DECLARE v_mysql_errno INT DEFAULT NULL;
@@ -341,11 +345,56 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     4.1. ATUALIZAÇÃO DA ESTRUTURA DA SILVER
     =========================================================
     */
-    ALTER TABLE silver_zsdbil17_faturamento
-        ADD COLUMN IF NOT EXISTS source_status VARCHAR(20) NULL,
-        ADD COLUMN IF NOT EXISTS first_seen_at DATETIME NULL,
-        ADD COLUMN IF NOT EXISTS last_seen_at DATETIME NULL,
-        ADD COLUMN IF NOT EXISTS missing_since DATETIME NULL;
+    SELECT COUNT(*)
+    INTO v_column_exists
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'silver_zsdbil17_faturamento'
+      AND COLUMN_NAME = 'source_status';
+
+    IF v_column_exists = 0 THEN
+        ALTER TABLE silver_zsdbil17_faturamento
+            ADD COLUMN source_status VARCHAR(20) NULL;
+    END IF;
+
+
+    SELECT COUNT(*)
+    INTO v_column_exists
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'silver_zsdbil17_faturamento'
+      AND COLUMN_NAME = 'first_seen_at';
+
+    IF v_column_exists = 0 THEN
+        ALTER TABLE silver_zsdbil17_faturamento
+            ADD COLUMN first_seen_at DATETIME NULL;
+    END IF;
+
+
+    SELECT COUNT(*)
+    INTO v_column_exists
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'silver_zsdbil17_faturamento'
+      AND COLUMN_NAME = 'last_seen_at';
+
+    IF v_column_exists = 0 THEN
+        ALTER TABLE silver_zsdbil17_faturamento
+            ADD COLUMN last_seen_at DATETIME NULL;
+    END IF;
+
+
+    SELECT COUNT(*)
+    INTO v_column_exists
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'silver_zsdbil17_faturamento'
+      AND COLUMN_NAME = 'missing_since';
+
+    IF v_column_exists = 0 THEN
+        ALTER TABLE silver_zsdbil17_faturamento
+            ADD COLUMN missing_since DATETIME NULL;
+    END IF;
 
     /*
     =========================================================
@@ -695,7 +744,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
         NULLIF(TRIM(t.code_brand_mode), ''),
 
         NULLIF(TRIM(t.sales_order_type), ''),
-        NULLIF(TRIM(t.item_categoy), ''),
+        NULLIF(TRIM(t.item_category), ''),
 
         t.source_status,
         t.first_seen_at,
@@ -783,7 +832,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     code_brand_mode = NULLIF(TRIM(t.code_brand_mode), ''),
 
     sales_order_type = NULLIF(TRIM(t.sales_order_type), ''),
-    item_category = NULLIF(TRIM(t.item_categoy), ''),
+    item_category = NULLIF(TRIM(t.item_category), ''),
 
     source_status = t.source_status,
     first_seen_at = t.first_seen_at,
