@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     so_item VARCHAR(10) NULL
         COMMENT 'Número do item da ordem de venda',
 
-    created_by_so VARCHAR(50) NULL
+    created_by_so TEXT NULL
         COMMENT 'Usuário ou origem responsável pela criação da ordem de venda',
 
     distribution_channel VARCHAR(10) NULL
@@ -49,10 +49,10 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     division VARCHAR(10) NULL
         COMMENT 'Código da divisão comercial',
 
-    division_description VARCHAR(100) NULL
+    division_description TEXT NULL
         COMMENT 'Descrição da divisão comercial',
 
-    customer_reference VARCHAR(100) NULL
+    customer_reference TEXT NULL
         COMMENT 'Referência do cliente associada ao documento',
 
 
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     chave_de_acesso VARCHAR(44) NULL
         COMMENT 'Chave de acesso da NF-e; VARCHAR para permitir estados como 00 antes da classificação',
 
-    nf_reference VARCHAR(100) NULL
+    nf_reference TEXT NULL
         COMMENT 'Referência de nota fiscal informada pelo SAP',
 
 
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     =========================================================
     */
 
-    material VARCHAR(30) NULL
+    material TEXT NULL
         COMMENT 'Código do material',
 
     ncm VARCHAR(20) NULL
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     utiliz_material VARCHAR(20) NULL
         COMMENT 'Código de utilização do material',
 
-    description VARCHAR(255) NULL
+    description TEXT NULL
         COMMENT 'Descrição do material ou item',
 
     chassis_serial_number VARCHAR(17) NULL
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     cfop VARCHAR(10) NULL
         COMMENT 'Código CFOP conforme recebido do SAP',
 
-    grpmercads VARCHAR(30) NULL
+    grpmercads TEXT NULL
         COMMENT 'Grupo de mercadorias informado pelo SAP',
 
     tipo_de_operacao VARCHAR(20) NULL
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     sold_to_party_cnpj VARCHAR(20) NULL
         COMMENT 'CNPJ do cliente Sold-To',
 
-    sold_to_party_name VARCHAR(150) NULL
+    sold_to_party_name TEXT NULL
         COMMENT 'Nome do cliente Sold-To',
 
     sold_to_party_state VARCHAR(5) NULL
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     ship_to_party_cnpj VARCHAR(20) NULL
         COMMENT 'CNPJ do cliente Ship-To',
 
-    ship_to_party_name VARCHAR(150) NULL
+    ship_to_party_name TEXT NULL
         COMMENT 'Nome do cliente Ship-To',
 
     ship_to_party_state VARCHAR(5) NULL
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     transportation_cnpj VARCHAR(20) NULL
         COMMENT 'CNPJ da transportadora',
 
-    transportation_name VARCHAR(150) NULL
+    transportation_name TEXT NULL
         COMMENT 'Nome da transportadora',
 
     transportation_state VARCHAR(5) NULL
@@ -179,13 +179,13 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     payment_condition VARCHAR(20) NULL
         COMMENT 'Código da condição de pagamento',
 
-    payment_condition_description VARCHAR(150) NULL
+    payment_condition_description TEXT NULL
         COMMENT 'Descrição da condição de pagamento',
 
     payment_method VARCHAR(20) NULL
         COMMENT 'Código do método de pagamento',
 
-    payment_method_description VARCHAR(150) NULL
+    payment_method_description TEXT NULL
         COMMENT 'Descrição do método de pagamento; origem Bronze: payment_method_descripition',
 
 
@@ -370,13 +370,13 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     dev_venda_so_item VARCHAR(10) NULL
         COMMENT 'Item da ordem relacionado à devolução',
 
-    dev_venda_material_code VARCHAR(30) NULL
+    dev_venda_material_code TEXT NULL
         COMMENT 'Código do material relacionado à devolução',
 
-    dev_venda_description VARCHAR(255) NULL
+    dev_venda_description TEXT NULL
         COMMENT 'Descrição do item relacionado à devolução',
 
-    dev_venda_chassis VARCHAR(30) NULL
+    dev_venda_chassis TEXT NULL
         COMMENT 'Chassi relacionado à devolução',
 
     dev_venda_dn_picking VARCHAR(20) NULL
@@ -394,7 +394,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     dev_venda_status_doc VARCHAR(20) NULL
         COMMENT 'Status do documento de devolução',
 
-    dev_venda_chave_de_acesso VARCHAR(44) NULL
+    dev_venda_chave_de_acesso TEXT NULL
         COMMENT 'Chave de acesso da NF-e relacionada à devolução',
 
 
@@ -404,7 +404,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     =========================================================
     */
 
-    n_di VARCHAR(30) NULL
+    n_di TEXT NULL
         COMMENT 'Número da Declaração de Importação',
 
     data_da_di DATE NULL
@@ -417,22 +417,22 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     =========================================================
     */
 
-    descricao_do_produto VARCHAR(255) NULL
+    descricao_do_produto TEXT NULL
         COMMENT 'Descrição técnica/comercial do produto',
 
-    chassi_do_veiculo VARCHAR(30) NULL
+    chassi_do_veiculo TEXT NULL
         COMMENT 'Chassi do veículo informado no bloco técnico do relatório',
 
-    no_de_serie VARCHAR(30) NULL
+    no_de_serie TEXT NULL
         COMMENT 'Número de série do veículo ou componente',
 
-    no_do_motor VARCHAR(30) NULL
+    no_do_motor TEXT NULL
         COMMENT 'Número do motor',
 
     codigo_da_cor VARCHAR(20) NULL
         COMMENT 'Código da cor',
 
-    descricao_da_cor VARCHAR(100) NULL
+    descricao_da_cor TEXT NULL
         COMMENT 'Descrição da cor',
 
     potencia_motor DECIMAL(10,2) NULL
@@ -471,7 +471,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     cap_ocup_max SMALLINT NULL
         COMMENT 'Capacidade máxima de ocupantes',
 
-    serie_number VARCHAR(30) NULL
+    serie_number TEXT NULL
         COMMENT 'Número de série adicional informado pelo SAP',
 
     byd_icms_st_taxpayer VARCHAR(20) NULL
@@ -529,7 +529,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     ibs_cbs_tax_sitn_code VARCHAR(20) NULL
         COMMENT 'Código da situação tributária IBS/CBS',
 
-    ibs_cbs_tax_classification_code VARCHAR(30) NULL
+    ibs_cbs_tax_classification_code TEXT NULL
         COMMENT 'Código de classificação tributária IBS/CBS',
 
 
@@ -542,7 +542,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     proc_time TIME NULL
         COMMENT 'Horário de processamento informado pelo SAP',
 
-    delivery_allocation_address VARCHAR(255) NULL
+    delivery_allocation_address TEXT NULL
         COMMENT 'Endereço ou referência de alocação da entrega',
 
     storage_location VARCHAR(20) NULL
@@ -551,7 +551,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     movement_type VARCHAR(10) NULL
         COMMENT 'Tipo de movimento SAP',
 
-    assignment_number VARCHAR(50) NULL
+    assignment_number TEXT NULL
         COMMENT 'Número de atribuição contábil',
 
     journal_entry_document VARCHAR(20) NULL
@@ -578,7 +578,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     mat_item_category_group VARCHAR(20) NULL
         COMMENT 'Grupo de categoria de item do material',
 
-    material_group_2 VARCHAR(30) NULL
+    material_group_2 TEXT NULL
         COMMENT 'Grupo de material adicional',
 
     um_sales VARCHAR(10) NULL
@@ -597,10 +597,10 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     id_execucao CHAR(36) NULL
         COMMENT 'Identificador UUID da execução que originou o registro',
 
-    usuario VARCHAR(100) NULL
+    usuario TEXT NULL
         COMMENT 'Usuário associado à carga de origem',
 
-    source_file VARCHAR(255) NULL
+    source_file TEXT NULL
         COMMENT 'Arquivo de origem do registro',
 
     source_status VARCHAR(20) NOT NULL
@@ -639,5 +639,6 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
     INDEX idx_sz17_status_date (source_status, issuance_date)
 
 ) ENGINE = InnoDB
+  ROW_FORMAT = DYNAMIC
 
   COMMENT = 'Movimentações de saída da ZSDBIL17 na camada Silver, preservando todos os campos da Bronze com tipos organizados por domínio.';
