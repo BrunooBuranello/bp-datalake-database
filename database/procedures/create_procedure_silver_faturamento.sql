@@ -744,7 +744,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
         NULLIF(TRIM(t.code_brand_mode), ''),
 
         NULLIF(TRIM(t.sales_order_type), ''),
-        NULLIF(TRIM(t.item_category), ''),
+        NULLIF(TRIM(t.item_categoy), ''),
 
         t.source_status,
         t.first_seen_at,
@@ -832,7 +832,7 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     code_brand_mode = NULLIF(TRIM(t.code_brand_mode), ''),
 
     sales_order_type = NULLIF(TRIM(t.sales_order_type), ''),
-    item_category = NULLIF(TRIM(t.item_category), ''),
+    item_category = NULLIF(TRIM(t.item_categoy), ''),
 
     source_status = t.source_status,
     first_seen_at = t.first_seen_at,
