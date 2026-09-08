@@ -314,6 +314,15 @@ BEGIN
 
     /*
     =========================================================
+    9.1 ENRIQUECIMENTO DEALER BRAND TO  BRAND_DEALER
+    =========================================================
+    */
+
+    ALTER TABLE gold_zsdbil17_faturamento
+    RENAME COLUMN brand TO brand_dealer;
+
+    /*
+    =========================================================
     10. ENRIQUECIMENTO CONDIÇÃO DE PAGAMENTO
     =========================================================
     */
@@ -328,7 +337,7 @@ BEGIN
         g.payment_condition_description_dim =
             NULLIF(
                 TRIM(d.payment_term_description_bp),
-                ''
+                ''  
             )
 
     WHERE
