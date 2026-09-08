@@ -296,6 +296,12 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     usuario VARCHAR(100) NOT NULL,
     source_file VARCHAR(255),
 
+    source_status VARCHAR(20) NULL,
+    first_seen_at DATETIME NULL,
+    last_seen_at DATETIME NULL,
+    missing_since DATETIME NULL,
+
+
     /*
     =====================================================
     RESTRIÇÕES DE UNICIDADE
@@ -335,6 +341,11 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     4.1. ATUALIZAÇÃO DA ESTRUTURA DA SILVER
     =========================================================
     */
+    ALTER TABLE silver_zsdbil17_faturamento
+        ADD COLUMN IF NOT EXISTS source_status VARCHAR(20) NULL,
+        ADD COLUMN IF NOT EXISTS first_seen_at DATETIME NULL,
+        ADD COLUMN IF NOT EXISTS last_seen_at DATETIME NULL,
+        ADD COLUMN IF NOT EXISTS missing_since DATETIME NULL;
 
     /*
     =========================================================
@@ -599,6 +610,12 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
         code_brand_mode,
         sales_order_type,
         item_category,
+        
+        source_status,
+        first_seen_at,
+        last_seen_at,
+        missing_since,
+
         dt_carga,
         id_execucao,
         usuario,
@@ -679,6 +696,11 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
 
         NULLIF(TRIM(t.sales_order_type), ''),
         NULLIF(TRIM(t.item_categoy), ''),
+
+        t.source_status,
+        t.first_seen_at,
+        t.last_seen_at,
+        t.missing_since,
 
         t.dt_carga,
         v_execution_id,
@@ -763,10 +785,16 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_faturamento (
     sales_order_type = NULLIF(TRIM(t.sales_order_type), ''),
     item_category = NULLIF(TRIM(t.item_categoy), ''),
 
+    source_status = t.source_status,
+    first_seen_at = t.first_seen_at,
+    last_seen_at = t.last_seen_at,
+    missing_since = t.missing_since,
+
     dt_carga = t.dt_carga,
     id_execucao = v_execution_id,
     usuario = CURRENT_USER(),
     source_file = NULLIF(TRIM(t.source_file), '');
+
     /*
     =========================================================
     8.6. LIMPEZA DA ÁREA TEMPORÁRIA
