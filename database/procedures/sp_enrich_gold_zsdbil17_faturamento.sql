@@ -282,7 +282,7 @@ BEGIN
                 ''
             ),
 
-        g.brand =
+        g.brand_dealer =
             NULLIF(
                 TRIM(d.brand),
                 ''
@@ -290,36 +290,27 @@ BEGIN
 
     WHERE
         NOT (
-                g.store_name_crm
-                <=>
-                COALESCE(
-                    NULLIF(TRIM(d.store_name_crm), ''),
-                    NULLIF(TRIM(d.store_name), '')
-                )
+            g.store_name_crm
+            <=>
+            COALESCE(
+                NULLIF(TRIM(d.store_name_crm), ''),
+                NULLIF(TRIM(d.store_name), '')
+            )
         )
 
         OR NOT (
-                g.dealer_group
-                <=>
-                NULLIF(TRIM(d.dealer_group), '')
+            g.dealer_group
+            <=>
+            NULLIF(TRIM(d.dealer_group), '')
         )
 
         OR NOT (
-                g.brand
-                <=>
-                NULLIF(TRIM(d.brand), '')
+            g.brand_dealer
+            <=>
+            NULLIF(TRIM(d.brand), '')
         );
 
     SET v_dealer_updated = ROW_COUNT();
-
-    /*
-    =========================================================
-    9.1 ENRIQUECIMENTO DEALER BRAND TO  BRAND_DEALER
-    =========================================================
-    */
-
-    ALTER TABLE gold_zsdbil17_faturamento
-    RENAME COLUMN brand TO brand_dealer;
 
     /*
     =========================================================
