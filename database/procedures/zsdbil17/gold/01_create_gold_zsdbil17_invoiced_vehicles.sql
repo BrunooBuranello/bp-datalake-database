@@ -35,7 +35,7 @@ a carga Gold deverá selecionar o registro mais recente utilizando:
         ORDER BY
             issuance_date DESC,
             invoice_number DESC,
-            id DESC
+            id_bronze DESC
     )
 
 IMPORTANTE:
