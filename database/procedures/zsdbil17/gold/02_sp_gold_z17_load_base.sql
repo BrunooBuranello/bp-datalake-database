@@ -46,6 +46,8 @@ Fluxo:
                'UNKNOWN'
            )
 
+           ship_to_party_code não pode iniciar com 'CBY'
+
 ============================================================
 REGRA DE SOURCE_STATUS
 ============================================================
@@ -68,14 +70,30 @@ MISSING:
 MIXED:
     Não entra na Gold.
 
+============================================================
+REGRA DE SHIP-TO
+============================================================
+
+Códigos iniciados por 'CBY' representam entidades internas
+e não devem compor a Gold de faturamento de veículos.
+
 IMPORTANTE:
+
+O filtro CBY é aplicado somente após o ranking.
+
+Isso evita fallback para uma NF histórica antiga caso
+o registro mais recente do chassi seja CBY.
+
+============================================================
+IMPORTANTE
+============================================================
 
 Não existe fallback para uma NF antiga.
 
 Exemplo:
 
-    NF100 -> ACTIVE / VALID
-    NF250 -> CANCELLED / CANCELLED
+    NF100 -> ACTIVE / VALID / dealer externo
+    NF250 -> ACTIVE / VALID / CBYDBR08
 
 NF250 é o registro mais recente.
 
@@ -142,27 +160,12 @@ BEGIN
             v_mysql_errno = MYSQL_ERRNO,
             v_error_message = MESSAGE_TEXT;
 
-        /*
-        Qualquer alteração realizada dentro da transação
-        é desfeita.
-        */
         ROLLBACK;
 
-
-        /*
-        Remove a temporary table caso a execução tenha falhado
-        antes da limpeza normal.
-        */
         DROP TEMPORARY TABLE IF EXISTS tmp_gold_z17_latest;
-
 
         SET v_finished_at = NOW();
 
-
-        /*
-        Atualiza o log somente se a execução já tiver sido
-        registrada com sucesso.
-        */
         IF v_execution_id IS NOT NULL THEN
 
             UPDATE bp_datalake.etl_execution_log
@@ -202,11 +205,6 @@ BEGIN
 
         END IF;
 
-
-        /*
-        O erro continua sendo devolvido para quem chamou
-        a procedure.
-        */
         RESIGNAL;
 
     END;
@@ -267,10 +265,6 @@ BEGIN
     ============================================================
     05. PROTEÇÃO CONTRA SILVER VAZIA
     ============================================================
-
-    Evita que uma falha anterior do pipeline resulte
-    no apagamento completo da Gold.
-    ============================================================
     */
 
     IF v_source_rows = 0 THEN
@@ -319,8 +313,8 @@ BEGIN
 
     IMPORTANTE:
 
-    source_status e access_key_status NÃO são utilizados
-    antes do ranking.
+    source_status, access_key_status e ship_to_party_code
+    NÃO são utilizados antes do ranking.
 
     Primeiro determinamos qual é o registro mais recente
     daquele chassi.
@@ -387,14 +381,11 @@ BEGIN
     10. CONTAGEM DOS REGISTROS ELEGÍVEIS
     ============================================================
 
-    UNKNOWN é aceito temporariamente porque o histórico anterior
-    à implantação da reconciliação não possui source_status
-    confiável.
+    Regras aplicadas somente após o ranking:
 
-    Para registros reconciliados atualmente, o estado esperado
-    é ACTIVE.
-
-    CANCELLED, MISSING e MIXED ficam fora da Gold.
+    - access_key_status = VALID
+    - source_status = ACTIVE ou UNKNOWN
+    - ship_to_party_code não pode iniciar com CBY
     ============================================================
     */
 
@@ -409,6 +400,11 @@ BEGIN
         AND source_status IN (
             'ACTIVE',
             'UNKNOWN'
+        )
+
+        AND (
+            ship_to_party_code IS NULL
+            OR TRIM(ship_to_party_code) NOT LIKE 'CBY%'
         );
 
 
@@ -425,14 +421,6 @@ BEGIN
     ============================================================
     11. LIMPEZA DA GOLD
     ============================================================
-
-    DELETE em vez de TRUNCATE.
-
-    DELETE participa da transação.
-
-    Se o INSERT falhar posteriormente, ROLLBACK restaura
-    o estado anterior da Gold.
-    ============================================================
     */
 
     DELETE
@@ -447,14 +435,8 @@ BEGIN
 
     INSERT INTO bp_datalake.gold_zsdbil17_faturamento_v2 (
 
-        /*
-        Rastreabilidade
-        */
         id_bronze,
 
-        /*
-        Faturamento / veículo
-        */
         chassis_serial_number,
         invoice_number,
         issuance_date,
@@ -469,57 +451,33 @@ BEGIN
 
         total_amount,
 
-        /*
-        Empresa
-        */
         byd_cnpj_number,
 
-        /*
-        Sold-to
-        */
         sold_to_party_code,
         sold_to_party_cnpj,
         sold_to_party_name,
         sold_to_party_state,
 
-        /*
-        Ship-to
-        */
         ship_to_party_code,
         ship_to_party_cnpj,
         ship_to_party_name,
         ship_to_party_state,
 
-        /*
-        Pagamento
-        */
         payment_condition,
 
-        /*
-        Fiscal
-        */
         chave_de_acesso,
         ncm,
         cfop,
 
-        /*
-        Organização SAP
-        */
         plant_code,
         company_code,
         sales_order_type,
         division,
 
-        /*
-        Documentos SAP
-        */
         sap_document,
         sales_order_number,
         invoice_series,
 
-        /*
-        Dados técnicos
-        */
         no_do_motor,
         codigo_da_cor,
 
@@ -543,9 +501,6 @@ BEGIN
 
         item_category,
 
-        /*
-        Auditoria
-        */
         usuario,
         source_file,
         dt_carga_silver,
@@ -556,14 +511,8 @@ BEGIN
 
     SELECT
 
-        /*
-        Rastreabilidade
-        */
         s.id_bronze,
 
-        /*
-        Faturamento / veículo
-        */
         TRIM(s.chassis_serial_number),
 
         TRIM(s.invoice_number),
@@ -596,17 +545,11 @@ BEGIN
 
         s.total_amount,
 
-        /*
-        Empresa
-        */
         NULLIF(
             TRIM(s.byd_cnpj_number),
             ''
         ),
 
-        /*
-        Sold-to
-        */
         NULLIF(
             TRIM(s.sold_to_party_code),
             ''
@@ -627,9 +570,6 @@ BEGIN
             ''
         ),
 
-        /*
-        Ship-to
-        */
         NULLIF(
             TRIM(s.ship_to_party_code),
             ''
@@ -650,17 +590,11 @@ BEGIN
             ''
         ),
 
-        /*
-        Pagamento
-        */
         NULLIF(
             TRIM(s.payment_condition),
             ''
         ),
 
-        /*
-        Fiscal
-        */
         TRIM(s.chave_de_acesso),
 
         NULLIF(
@@ -673,9 +607,6 @@ BEGIN
             ''
         ),
 
-        /*
-        Organização SAP
-        */
         NULLIF(
             TRIM(s.plant_code),
             ''
@@ -696,9 +627,6 @@ BEGIN
             ''
         ),
 
-        /*
-        Documentos SAP
-        */
         NULLIF(
             TRIM(s.sap_document),
             ''
@@ -714,9 +642,6 @@ BEGIN
             ''
         ),
 
-        /*
-        Dados técnicos
-        */
         NULLIF(
             TRIM(s.no_do_motor),
             ''
@@ -781,9 +706,6 @@ BEGIN
             ''
         ),
 
-        /*
-        Auditoria
-        */
         CURRENT_USER(),
 
         NULLIF(
@@ -805,12 +727,13 @@ BEGIN
         AND s.source_status IN (
             'ACTIVE',
             'UNKNOWN'
+        )
+
+        AND (
+            s.ship_to_party_code IS NULL
+            OR TRIM(s.ship_to_party_code) NOT LIKE 'CBY%'
         );
 
-
-    /*
-    Quantidade efetivamente inserida na Gold.
-    */
 
     SET v_loaded_rows = ROW_COUNT();
 
@@ -818,16 +741,6 @@ BEGIN
     /*
     ============================================================
     13. VALIDAÇÃO DE CONSISTÊNCIA
-    ============================================================
-
-    Como a estratégia atual é full refresh:
-
-        registros selecionados
-            =
-        registros inseridos
-
-    Qualquer diferença indica que algo inesperado aconteceu
-    durante a carga.
     ============================================================
     */
 
@@ -881,10 +794,6 @@ BEGIN
 
         inserted_rows = v_loaded_rows,
 
-        /*
-        Full refresh.
-        Não existe UPDATE individual.
-        */
         updated_rows = 0,
 
         rejected_rows = v_rejected_rows,
@@ -925,40 +834,18 @@ BEGIN
             v_finished_at
         ) AS execution_duration_seconds,
 
-        /*
-        Total da Silver.
-        */
         v_source_rows AS source_rows,
 
-        /*
-        Linhas classificadas como veículo antes da deduplicação.
-        */
         v_vehicle_rows AS vehicle_rows,
 
-        /*
-        Quantidade de chassis após ranking.
-        */
         v_latest_rows AS latest_vehicle_chassis,
 
-        /*
-        Chassis elegíveis:
-        ACTIVE/UNKNOWN + VALID.
-        */
         v_selected_rows AS selected_rows,
 
-        /*
-        Últimos estados de chassis que ficaram fora da Gold.
-        */
         v_rejected_rows AS rejected_rows,
 
-        /*
-        Quantidade inserida nesta execução.
-        */
         v_loaded_rows AS loaded_rows,
 
-        /*
-        Validação final da quantidade física da Gold.
-        */
         (
             SELECT COUNT(*)
 
