@@ -234,6 +234,33 @@ BEGIN
     INTO v_source_rows
     FROM tmp_ds_gold_eligible;
 
+    /*
+    ===============================================================================
+    5.1 LIMPEZA DO ENRIQUECIMENTO ANTERIOR
+    ===============================================================================
+
+    Remove valores de Direct Sales previamente gravados para o mesmo
+    escopo que será recalculado nesta execução.
+
+    Isso evita manter dados residuais quando um registro da Gold
+    deixa de possuir correspondência válida na base de Direct Sales.
+    ===============================================================================
+    */
+
+    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
+
+    INNER JOIN tmp_ds_gold_eligible AS e
+        ON e.id = g.id
+
+    SET
+        g.order_no = NULL,
+        g.order_car_no = NULL,
+        g.order_status = NULL
+
+    WHERE
+        g.order_no IS NOT NULL 
+        OR g.order_car_no IS NOT NULL
+        OR g.order_status IS NOT NULL;
 
     /*
     ===========================================================================
