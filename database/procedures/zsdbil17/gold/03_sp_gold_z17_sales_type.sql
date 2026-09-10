@@ -26,7 +26,7 @@ BEGIN
 
     SELECT COUNT(*)
     INTO v_source_rows
-    FROM bp_datalake.gold_zsdbil17_faturamento;
+    FROM bp_datalake.gold_zsdbil17_faturamento_v2;
 
 
     /*
@@ -35,7 +35,7 @@ BEGIN
     ============================================================
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     INNER JOIN bp_datalake.dim_sales_order_type AS d
         ON TRIM(g.division) = TRIM(d.sales_order_type)
@@ -63,7 +63,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_division_classified
 
-    FROM bp_datalake.gold_zsdbil17_faturamento AS g
+    FROM bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     INNER JOIN bp_datalake.dim_sales_order_type AS d
         ON TRIM(g.division) = TRIM(d.sales_order_type)
@@ -81,7 +81,7 @@ BEGIN
     ============================================================
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     INNER JOIN bp_datalake.dim_cfop_sales_type AS d
         ON TRIM(g.cfop) = TRIM(d.cfop)
@@ -114,7 +114,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_cfop_classified
 
-    FROM bp_datalake.gold_zsdbil17_faturamento AS g
+    FROM bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     LEFT JOIN bp_datalake.dim_sales_order_type AS s
         ON TRIM(g.division) = TRIM(s.sales_order_type)
@@ -140,7 +140,7 @@ BEGIN
     ============================================================
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento
+    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2
 
     SET division_description = 'UNKNOWN'
 
@@ -158,7 +158,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_unknown_rows
 
-    FROM bp_datalake.gold_zsdbil17_faturamento
+    FROM bp_datalake.gold_zsdbil17_faturamento_v2
 
     WHERE division_description = 'UNKNOWN';
 

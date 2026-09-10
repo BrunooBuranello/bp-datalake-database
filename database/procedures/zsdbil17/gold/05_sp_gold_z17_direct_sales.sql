@@ -133,7 +133,7 @@ BEGIN
         VALUES (
             'sp_gold_z17_direct_sales',
             'dwd_sal_slm_direct_sale_order_details_wide',
-            'gold_zsdbil17_faturamento',
+            'gold_zsdbil17_faturamento_v2',
             'ERROR',
             CURRENT_USER(),
             v_started_at,
@@ -198,13 +198,13 @@ BEGIN
     CREATE TEMPORARY TABLE tmp_ds_gold_eligible AS
 
     SELECT
-        g.id,
+        g.id_bronze AS id,
         g.chassis_serial_number,
         g.invoice_number,
         g.issuance_date,
         g.division
 
-    FROM bp_datalake.gold_zsdbil17_faturamento AS g
+    FROM bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     WHERE g.division NOT IN ('00', 'B1', 'B2')
 
@@ -247,10 +247,10 @@ BEGIN
     ===============================================================================
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     INNER JOIN tmp_ds_gold_eligible AS e
-        ON e.id = g.id
+        ON e.id = g.id_bronze
 
     SET
         g.order_no = NULL,
@@ -496,10 +496,10 @@ BEGIN
     ===========================================================================
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
 
     INNER JOIN tmp_ds_match_resolved AS r
-        ON g.id = r.gold_id
+        ON g.id_bronze = r.gold_id
 
     SET
         g.order_no = r.order_no,
@@ -552,7 +552,7 @@ BEGIN
     VALUES (
         'sp_gold_z17_direct_sales',
         'dwd_sal_slm_direct_sale_order_details_wide',
-        'gold_zsdbil17_faturamento',
+        'gold_zsdbil17_faturamento_v2',
         'SUCCESS',
         CURRENT_USER(),
         v_started_at,
