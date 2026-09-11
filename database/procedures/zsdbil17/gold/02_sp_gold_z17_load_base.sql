@@ -38,7 +38,7 @@ Fluxo:
     3. selecionar somente o registro mais recente
 
     4. somente DEPOIS do ranking validar:
-
+            invoice_number preenchido
            access_key_status = 'VALID'
 
            source_status IN (
@@ -384,8 +384,10 @@ BEGIN
     Regras aplicadas somente após o ranking:
 
     - access_key_status = VALID
+    - invoice_number preenchido
     - source_status = ACTIVE ou UNKNOWN
     - ship_to_party_code não pode iniciar com CBY
+
     ============================================================
     */
 
@@ -397,6 +399,11 @@ BEGIN
     WHERE
         access_key_status = 'VALID'
 
+        AND NULLIF(
+            TRIM(invoice_number),
+            ''
+        ) IS NOT NULL
+
         AND source_status IN (
             'ACTIVE',
             'UNKNOWN'
@@ -406,7 +413,6 @@ BEGIN
             ship_to_party_code IS NULL
             OR TRIM(ship_to_party_code) NOT LIKE 'CBY%'
         );
-
 
     /*
     Registros classificados como veículo e mais recentes
@@ -719,10 +725,15 @@ BEGIN
 
         v_execution_id
 
-    FROM tmp_gold_z17_latest AS s
+   FROM tmp_gold_z17_latest AS s
 
     WHERE
         s.access_key_status = 'VALID'
+
+        AND NULLIF(
+            TRIM(s.invoice_number),
+            ''
+        ) IS NOT NULL
 
         AND s.source_status IN (
             'ACTIVE',
