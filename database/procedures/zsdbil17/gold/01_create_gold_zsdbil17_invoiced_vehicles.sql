@@ -216,6 +216,20 @@ CREATE TABLE bp_datalake.gold_zsdbil17_faturamento_v2 (
 
     sales_order_number VARCHAR(10) NULL,
 
+    billing_number_vf01 VARCHAR(10) NULL,
+
+    iva VARCHAR(20) NULL,
+
+    dir_fiscal_icms VARCHAR(20) NULL,
+
+    dir_fiscal_ipi VARCHAR(20) NULL,
+
+    dir_fiscal_iss VARCHAR(20) NULL,
+
+    dir_fiscal_cofins VARCHAR(20) NULL,
+
+    dir_fiscal_pis VARCHAR(20) NULL,
+
 
     /*
     ============================================================
