@@ -14,7 +14,11 @@ BEGIN
 
     OBJECTIVE
         Classificar tecnicamente a chave de acesso da NF-e
-        na camada Silver.
+        somente para as datas presentes no snapshot atual da staging.
+
+    SCOPE
+        STAGING define as issuance_date impactadas.
+        SILVER continua sendo a fonte dos registros classificados.
 
     STATUS
         MISSING
@@ -34,12 +38,8 @@ BEGIN
 
     IMPORTANT
         Nenhum registro é excluído.
-
-        A procedure garante a existência da coluna
-        access_key_status.
-
-        A validação do dígito verificador utiliza módulo 11
-        sobre os 43 primeiros dígitos da chave.
+        Apenas access_key_status é atualizado.
+        Registros fora das datas atuais da staging não são tocados.
     ============================================================
     */
 
@@ -58,8 +58,10 @@ BEGIN
     DECLARE v_column_exists INT DEFAULT 0;
     DECLARE v_column_created INT DEFAULT 0;
 
-    DECLARE v_total_rows BIGINT DEFAULT 0;
+    DECLARE v_scope_dates INT DEFAULT 0;
+    DECLARE v_scope_rows BIGINT DEFAULT 0;
     DECLARE v_rows_changed BIGINT DEFAULT 0;
+    DECLARE v_distinct_valid_keys BIGINT DEFAULT 0;
 
     DECLARE v_missing BIGINT DEFAULT 0;
     DECLARE v_cancelled BIGINT DEFAULT 0;
@@ -89,11 +91,11 @@ BEGIN
 
         ROLLBACK;
 
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_scope_dates;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_access_key_weights;
         DROP TEMPORARY TABLE IF EXISTS tmp_z17_access_key_validation;
 
         SET v_finished_at = NOW();
-
 
         INSERT INTO bp_datalake.etl_execution_log
         (
@@ -123,16 +125,19 @@ BEGIN
             CURRENT_USER(),
             v_started_at,
             v_finished_at,
-            v_total_rows,
-            v_total_rows,
+            v_scope_rows,
+            v_scope_rows,
             0,
             v_rows_changed,
             0,
             v_error_code,
             v_error_message,
-
             JSON_OBJECT(
+                'mode', 'INCREMENTAL',
+                'scope_dates', v_scope_dates,
+                'scope_rows', v_scope_rows,
                 'access_key_status_column_created', v_column_created,
+                'distinct_valid_keys', v_distinct_valid_keys,
                 'missing', v_missing,
                 'cancelled', v_cancelled,
                 'invalid_format', v_invalid_format,
@@ -142,7 +147,6 @@ BEGIN
                 'classified_total', v_classified_total,
                 'rows_changed', v_rows_changed
             ),
-
             TIMESTAMPDIFF(
                 SECOND,
                 v_started_at,
@@ -150,10 +154,6 @@ BEGIN
             )
         );
 
-        /*
-        Garante persistência do log de falha após o rollback
-        do processamento principal.
-        */
         COMMIT;
 
         SET v_execution_id = LAST_INSERT_ID();
@@ -171,13 +171,10 @@ BEGIN
 
     SELECT COUNT(*)
     INTO v_column_exists
-
     FROM information_schema.columns
-
     WHERE table_schema = 'bp_datalake'
       AND table_name = 'silver_zsdbil17_outbound_movements'
       AND column_name = 'access_key_status';
-
 
     IF v_column_exists = 0 THEN
 
@@ -192,14 +189,59 @@ BEGIN
 
     /*
     ============================================================
-    SOURCE COUNT
+    DEFINE INCREMENTAL SCOPE
+
+    A staging não fornece os registros para esta classificação.
+    Ela informa somente quais issuance_date foram impactadas.
     ============================================================
     */
 
-    SELECT COUNT(*)
-    INTO v_total_rows
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_scope_dates;
 
-    FROM bp_datalake.silver_zsdbil17_outbound_movements;
+    CREATE TEMPORARY TABLE tmp_z17_scope_dates
+    (
+        issuance_date DATE NOT NULL PRIMARY KEY
+    );
+
+    INSERT INTO tmp_z17_scope_dates
+    (
+        issuance_date
+    )
+    SELECT DISTINCT
+        issuance_date
+    FROM bp_datalake.stg_zsdbil17_faturamento
+    WHERE issuance_date IS NOT NULL;
+
+    SELECT COUNT(*)
+    INTO v_scope_dates
+    FROM tmp_z17_scope_dates;
+
+    IF v_scope_dates = 0 THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT =
+            'Access key incremental bloqueada: nenhuma issuance_date valida na staging.';
+
+    END IF;
+
+
+    /*
+    Quantidade de linhas Silver realmente pertencentes ao escopo atual.
+    */
+
+    SELECT COUNT(*)
+    INTO v_scope_rows
+    FROM bp_datalake.silver_zsdbil17_outbound_movements AS s
+    INNER JOIN tmp_z17_scope_dates AS d
+        ON d.issuance_date = s.issuance_date;
+
+    IF v_scope_rows = 0 THEN
+
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT =
+            'Access key incremental bloqueada: nenhuma linha Silver encontrada para as datas da staging.';
+
+    END IF;
 
 
     /*
@@ -214,20 +256,6 @@ BEGIN
     /*
     ============================================================
     NF-e CHECK DIGIT WEIGHTS
-
-    O DV é o 44º dígito.
-
-    Os 43 primeiros dígitos são multiplicados da direita
-    para a esquerda pelos pesos:
-
-        2, 3, 4, 5, 6, 7, 8, 9
-
-    repetidamente.
-
-    Portanto, olhando a chave da esquerda para a direita,
-    os pesos ficam:
-
-        4, 3, 2, 9, 8, 7, 6, 5...
     ============================================================
     */
 
@@ -238,7 +266,6 @@ BEGIN
         digit_position TINYINT NOT NULL PRIMARY KEY,
         digit_weight TINYINT NOT NULL
     );
-
 
     INSERT INTO tmp_z17_access_key_weights
     (
@@ -293,11 +320,10 @@ BEGIN
 
     /*
     ============================================================
-    CALCULATE CHECK DIGIT
+    CALCULATE CHECK DIGIT - ONLY CURRENT SCOPE
 
-    Calculamos apenas para chaves com exatamente 44 números.
-
-    Cada chave distinta é calculada uma única vez.
+    Cada chave numérica de 44 posições é calculada uma única vez,
+    porém somente entre as linhas das datas presentes na staging.
     ============================================================
     */
 
@@ -309,28 +335,14 @@ BEGIN
         calculated_check_digit TINYINT NOT NULL
     );
 
-
     INSERT INTO tmp_z17_access_key_validation
     (
         access_key,
         calculated_check_digit
     )
-
     SELECT
         k.access_key,
-
         CASE
-
-            /*
-            Módulo 11:
-
-            resto 0 ou 1
-                -> DV = 0
-
-            demais restos
-                -> DV = 11 - resto
-            */
-
             WHEN MOD(
                 SUM(
                     CAST(
@@ -338,46 +350,37 @@ BEGIN
                             k.access_key,
                             w.digit_position,
                             1
-                        )
-                        AS UNSIGNED
-                    )
-                    * w.digit_weight
+                        ) AS UNSIGNED
+                    ) * w.digit_weight
                 ),
                 11
             ) IN (0, 1)
-
             THEN 0
 
             ELSE
-                11 -
-                MOD(
+                11 - MOD(
                     SUM(
                         CAST(
                             SUBSTRING(
                                 k.access_key,
                                 w.digit_position,
                                 1
-                            )
-                            AS UNSIGNED
-                        )
-                        * w.digit_weight
+                            ) AS UNSIGNED
+                        ) * w.digit_weight
                     ),
                     11
                 )
-
         END AS calculated_check_digit
 
     FROM
     (
         SELECT DISTINCT
-            TRIM(chave_de_acesso) AS access_key
-
-        FROM bp_datalake.silver_zsdbil17_outbound_movements
-
-        WHERE
-            TRIM(chave_de_acesso)
-            REGEXP '^[0-9]{44}$'
-
+            TRIM(s.chave_de_acesso) AS access_key
+        FROM bp_datalake.silver_zsdbil17_outbound_movements AS s
+        INNER JOIN tmp_z17_scope_dates AS d
+            ON d.issuance_date = s.issuance_date
+        WHERE TRIM(s.chave_de_acesso)
+              REGEXP '^[0-9]{44}$'
     ) AS k
 
     CROSS JOIN tmp_z17_access_key_weights AS w
@@ -385,14 +388,21 @@ BEGIN
     GROUP BY
         k.access_key;
 
+    SELECT COUNT(*)
+    INTO v_distinct_valid_keys
+    FROM tmp_z17_access_key_validation;
+
 
     /*
     ============================================================
-    CLASSIFY ACCESS KEYS
+    CLASSIFY ACCESS KEYS - ONLY CURRENT SCOPE
     ============================================================
     */
 
     UPDATE bp_datalake.silver_zsdbil17_outbound_movements AS s
+
+    INNER JOIN tmp_z17_scope_dates AS d
+        ON d.issuance_date = s.issuance_date
 
     LEFT JOIN tmp_z17_access_key_validation AS v
         ON v.access_key = TRIM(s.chave_de_acesso)
@@ -400,135 +410,86 @@ BEGIN
     SET
         s.access_key_status =
             CASE
-
                 WHEN s.chave_de_acesso IS NULL
                      OR TRIM(s.chave_de_acesso) = ''
                 THEN 'MISSING'
 
-
                 WHEN TRIM(s.chave_de_acesso) = '00'
                 THEN 'CANCELLED'
-
 
                 WHEN TRIM(s.chave_de_acesso)
                      NOT REGEXP '^[0-9]{44}$'
                 THEN 'INVALID_FORMAT'
-
 
                 WHEN v.calculated_check_digit =
                      CAST(
                          RIGHT(
                              TRIM(s.chave_de_acesso),
                              1
-                         )
-                         AS UNSIGNED
+                         ) AS UNSIGNED
                      )
                 THEN 'VALID'
 
-
                 ELSE 'INVALID_CHECK_DIGIT'
-
             END
-
-
-    /*
-    Atualiza apenas quando o status calculado for diferente
-    do status atualmente gravado.
-
-    <=> é a comparação NULL-safe do MySQL.
-    */
 
     WHERE NOT
     (
         s.access_key_status
         <=>
         CASE
-
             WHEN s.chave_de_acesso IS NULL
                  OR TRIM(s.chave_de_acesso) = ''
             THEN 'MISSING'
 
-
             WHEN TRIM(s.chave_de_acesso) = '00'
             THEN 'CANCELLED'
-
 
             WHEN TRIM(s.chave_de_acesso)
                  NOT REGEXP '^[0-9]{44}$'
             THEN 'INVALID_FORMAT'
-
 
             WHEN v.calculated_check_digit =
                  CAST(
                      RIGHT(
                          TRIM(s.chave_de_acesso),
                          1
-                     )
-                     AS UNSIGNED
+                     ) AS UNSIGNED
                  )
             THEN 'VALID'
 
-
             ELSE 'INVALID_CHECK_DIGIT'
-
         END
     );
-
-
-    /*
-    Deve ser capturado imediatamente depois do UPDATE.
-    */
 
     SET v_rows_changed = ROW_COUNT();
 
 
     /*
     ============================================================
-    METRICS
+    METRICS - ONLY CURRENT SCOPE
     ============================================================
     */
 
     SELECT
-
-        COALESCE(
-            SUM(access_key_status = 'MISSING'),
-            0
-        ),
-
-        COALESCE(
-            SUM(access_key_status = 'CANCELLED'),
-            0
-        ),
-
-        COALESCE(
-            SUM(access_key_status = 'INVALID_FORMAT'),
-            0
-        ),
-
-        COALESCE(
-            SUM(access_key_status = 'INVALID_CHECK_DIGIT'),
-            0
-        ),
-
-        COALESCE(
-            SUM(access_key_status = 'VALID'),
-            0
-        )
-
+        COALESCE(SUM(s.access_key_status = 'MISSING'), 0),
+        COALESCE(SUM(s.access_key_status = 'CANCELLED'), 0),
+        COALESCE(SUM(s.access_key_status = 'INVALID_FORMAT'), 0),
+        COALESCE(SUM(s.access_key_status = 'INVALID_CHECK_DIGIT'), 0),
+        COALESCE(SUM(s.access_key_status = 'VALID'), 0)
     INTO
         v_missing,
         v_cancelled,
         v_invalid_format,
         v_invalid_check_digit,
         v_valid
-
-    FROM bp_datalake.silver_zsdbil17_outbound_movements;
-
+    FROM bp_datalake.silver_zsdbil17_outbound_movements AS s
+    INNER JOIN tmp_z17_scope_dates AS d
+        ON d.issuance_date = s.issuance_date;
 
     SET v_invalid_total =
           v_invalid_format
         + v_invalid_check_digit;
-
 
     SET v_classified_total =
           v_missing
@@ -542,27 +503,29 @@ BEGIN
     ============================================================
     SAFETY CHECK
 
-    Toda linha da Silver deve possuir exatamente um status.
+    Toda linha Silver do escopo atual deve possuir exatamente
+    um access_key_status válido após esta execução.
     ============================================================
     */
 
-    IF v_classified_total <> v_total_rows THEN
+    IF v_classified_total <> v_scope_rows THEN
 
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT =
-            'Access key classification mismatch: not all Silver rows were classified';
+            'Access key incremental inconsistente: nem todas as linhas do escopo foram classificadas.';
 
     END IF;
 
 
     /*
     ============================================================
-    SUCCESS LOG
+    SUCCESS
     ============================================================
     */
 
-    SET v_finished_at = NOW();
+    COMMIT;
 
+    SET v_finished_at = NOW();
 
     INSERT INTO bp_datalake.etl_execution_log
     (
@@ -592,16 +555,19 @@ BEGIN
         CURRENT_USER(),
         v_started_at,
         v_finished_at,
-        v_total_rows,
-        v_total_rows,
+        v_scope_rows,
+        v_scope_rows,
         0,
         v_rows_changed,
         0,
         NULL,
         NULL,
-
         JSON_OBJECT(
+            'mode', 'INCREMENTAL',
+            'scope_dates', v_scope_dates,
+            'scope_rows', v_scope_rows,
             'access_key_status_column_created', v_column_created,
+            'distinct_valid_keys', v_distinct_valid_keys,
             'missing', v_missing,
             'cancelled', v_cancelled,
             'invalid_format', v_invalid_format,
@@ -611,7 +577,6 @@ BEGIN
             'classified_total', v_classified_total,
             'rows_changed', v_rows_changed
         ),
-
         TIMESTAMPDIFF(
             SECOND,
             v_started_at,
@@ -619,11 +584,7 @@ BEGIN
         )
     );
 
-
     SET v_execution_id = LAST_INSERT_ID();
-
-
-    COMMIT;
 
 
     /*
@@ -632,6 +593,7 @@ BEGIN
     ============================================================
     */
 
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_scope_dates;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_access_key_weights;
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_access_key_validation;
 
@@ -645,20 +607,16 @@ BEGIN
     SELECT
         v_execution_id AS execution_id,
         'SUCCESS' AS execution_status,
-
-        v_column_created
-            AS access_key_status_column_created,
-
-        v_total_rows AS total_rows,
+        'INCREMENTAL' AS execution_mode,
+        v_scope_dates AS scope_dates,
+        v_scope_rows AS scope_rows,
         v_rows_changed AS rows_changed,
-
+        v_distinct_valid_keys AS distinct_valid_keys,
         v_valid AS valid,
         v_missing AS missing,
         v_cancelled AS cancelled,
-
         v_invalid_format AS invalid_format,
         v_invalid_check_digit AS invalid_check_digit,
-
         v_invalid_total AS invalid_total,
         v_classified_total AS classified_total;
 
