@@ -78,7 +78,7 @@ BEGIN
     VALUES (
         'sp_process_zsdbil17_pipeline_v2',
         'stg_zsdbil17_faturamento',
-        'gold_zsdbil17_faturamento_v2',
+        'gold_zsdbil17_faturamento',
         'RUNNING',
         CURRENT_USER(),
         v_started_at,
@@ -201,7 +201,7 @@ BEGIN
     SELECT
         v_pipeline_execution_id AS pipeline_execution_id,
         'SUCCESS' AS execution_status,
-        'gold_zsdbil17_faturamento_v2' AS target_table,
+        'gold_zsdbil17_faturamento' AS target_table,
         v_started_at AS started_at,
         v_finished_at AS finished_at,
 

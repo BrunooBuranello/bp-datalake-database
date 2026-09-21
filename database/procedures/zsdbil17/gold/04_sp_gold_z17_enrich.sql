@@ -80,7 +80,7 @@ BEGIN
 
     SELECT COUNT(*)
     INTO v_source_rows
-    FROM bp_datalake.gold_zsdbil17_faturamento_v2;
+    FROM bp_datalake.gold_zsdbil17_faturamento;
 
 
     /*
@@ -111,7 +111,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_dealer_match
 
-    FROM bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
     WHERE EXISTS (
 
@@ -131,7 +131,7 @@ BEGIN
     ------------------------------------------------------------
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
     LEFT JOIN silver.mapping_dealer_expansion_unic AS d
         ON TRIM(g.ship_to_party_code) =
@@ -209,7 +209,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_payment_match
 
-    FROM bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
     WHERE EXISTS (
 
@@ -236,7 +236,7 @@ BEGIN
     ------------------------------------------------------------
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
     LEFT JOIN bp_datalake.dim_cond_pagamento AS d
         ON TRIM(g.payment_condition) =
@@ -330,7 +330,7 @@ BEGIN
     SELECT COUNT(*)
     INTO v_plant_match
 
-    FROM bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
     WHERE EXISTS (
 
@@ -357,7 +357,7 @@ BEGIN
     ------------------------------------------------------------
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
     LEFT JOIN bp_datalake.dim_plant AS d
         ON TRIM(g.plant_code) =
@@ -446,7 +446,7 @@ BEGIN
     ------------------------------------------------------------
     */
 
-    UPDATE bp_datalake.gold_zsdbil17_faturamento_v2 AS g
+    UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
     SET
         g.origem_chassi =
@@ -511,7 +511,7 @@ BEGIN
         v_origem_nacional,
         v_origem_unknown
 
-    FROM bp_datalake.gold_zsdbil17_faturamento_v2;
+    FROM bp_datalake.gold_zsdbil17_faturamento;
 
 
     /*

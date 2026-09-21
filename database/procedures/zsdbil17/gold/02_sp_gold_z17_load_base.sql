@@ -14,7 +14,7 @@ Origem:
     bp_datalake.silver_zsdbil17_outbound_movements
 
 Destino:
-    bp_datalake.gold_zsdbil17_faturamento_v2
+    bp_datalake.gold_zsdbil17_faturamento
 
 ============================================================
 REGRA DA GOLD
@@ -237,7 +237,7 @@ BEGIN
 
         'silver_zsdbil17_outbound_movements',
 
-        'gold_zsdbil17_faturamento_v2',
+        'gold_zsdbil17_faturamento',
 
         'RUNNING',
 
@@ -433,7 +433,7 @@ BEGIN
     */
 
     DELETE
-    FROM bp_datalake.gold_zsdbil17_faturamento_v2;
+    FROM bp_datalake.gold_zsdbil17_faturamento;
 
 
     /*
@@ -442,7 +442,7 @@ BEGIN
     ============================================================
     */
 
-    INSERT INTO bp_datalake.gold_zsdbil17_faturamento_v2 (
+    INSERT INTO bp_datalake.gold_zsdbil17_faturamento (
 
         id_bronze,
 
@@ -913,7 +913,7 @@ BEGIN
         (
             SELECT COUNT(*)
 
-            FROM bp_datalake.gold_zsdbil17_faturamento_v2
+            FROM bp_datalake.gold_zsdbil17_faturamento
 
         ) AS gold_rows;
 

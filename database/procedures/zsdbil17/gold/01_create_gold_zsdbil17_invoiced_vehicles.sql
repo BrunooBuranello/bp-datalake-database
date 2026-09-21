@@ -7,15 +7,10 @@ Arquivo:
 01_create_gold_zsdbil17_invoiced_vehicles.sql
 
 Objetivo:
-Criar a nova tabela Gold de faturamento de veículos.
+Criar a tabela oficial Gold de faturamento de veículos.
 
-Tabela temporária de homologação:
-    bp_datalake.gold_zsdbil17_faturamento_v2
-
-A tabela oficial atualmente utilizada em produção:
+Tabela:
     bp_datalake.gold_zsdbil17_faturamento
-
-NÃO deve ser alterada por este script.
 
 ============================================================
 RESPONSABILIDADE DA GOLD
@@ -42,11 +37,11 @@ IMPORTANTE:
 
 A seleção e classificação dos registros NÃO pertence a este DDL.
 
-As regras serão implementadas posteriormente na procedure de carga:
+As regras são implementadas na procedure de carga:
 
     02_sp_gold_z17_load_base.sql
 
-A Gold deverá trabalhar sobre classificações já realizadas na Silver,
+A Gold trabalha sobre classificações realizadas na Silver,
 como:
 
     cfop_car
@@ -54,27 +49,23 @@ como:
     access_key_status
 
 ============================================================
-ESTRATÉGIA DE MIGRAÇÃO
+CUTOVER
 ============================================================
 
-Durante homologação:
+A arquitetura V2 foi homologada utilizando uma tabela temporária
+separada da Gold oficial.
+
+Após o cutover, a tabela oficial passa a ser:
 
     gold_zsdbil17_faturamento
-        = produção atual
 
-    gold_zsdbil17_faturamento_v2
-        = nova arquitetura
-
-Após validação, será realizado o cutover por RENAME TABLE.
-
-A tabela antiga será preservada inicialmente como:
-
-    gold_zsdbil17_faturamento_legacy
+A Gold anterior deve ser preservada temporariamente como tabela
+legacy para permitir rollback durante o período de estabilização.
 
 ============================================================
 */
 
-CREATE TABLE bp_datalake.gold_zsdbil17_faturamento_v2 (
+CREATE TABLE bp_datalake.gold_zsdbil17_faturamento (
 
     /*
     ============================================================
@@ -366,18 +357,13 @@ CREATE TABLE bp_datalake.gold_zsdbil17_faturamento_v2 (
 RESULTADO ESPERADO
 ============================================================
 
-Após execução deste arquivo deverão coexistir:
+Após execução deste arquivo deverá existir:
 
     bp_datalake.gold_zsdbil17_faturamento
-        -> Gold atualmente utilizada em produção
-
-    bp_datalake.gold_zsdbil17_faturamento_v2
-        -> Nova Gold em homologação
-
 
 Nenhum dado é carregado por este arquivo.
 
-O próximo arquivo será responsável pela carga:
+A carga da Gold é responsabilidade de:
 
     02_sp_gold_z17_load_base.sql
 
