@@ -1,8 +1,8 @@
 DELIMITER $$
 
-DROP PROCEDURE IF EXISTS sp_silver_z17_load_base$$
+DROP PROCEDURE IF EXISTS bp_datalake.sp_silver_z17_load_base$$
 
-CREATE PROCEDURE sp_silver_z17_load_base()
+CREATE PROCEDURE bp_datalake.sp_silver_z17_load_base()
 BEGIN
 
     /*
@@ -14,8 +14,21 @@ BEGIN
     DECLARE v_execution_id BIGINT DEFAULT NULL;
     DECLARE v_started_at DATETIME DEFAULT NULL;
     DECLARE v_finished_at DATETIME DEFAULT NULL;
+
+    -- Datas distintas recebidas no snapshot atual da staging.
+    DECLARE v_scope_dates INT DEFAULT 0;
+
+    -- Linhas da Bronze que pertencem somente às datas recebidas.
     DECLARE v_source_rows BIGINT DEFAULT 0;
+
+    -- Linhas antigas removidas da Silver dentro do mesmo escopo.
+    DECLARE v_deleted_rows BIGINT DEFAULT 0;
+
+    -- Linhas inseridas novamente na Silver.
     DECLARE v_loaded_rows BIGINT DEFAULT 0;
+
+    -- Quantidade final existente na Silver dentro do escopo.
+    DECLARE v_target_rows BIGINT DEFAULT 0;
 
     DECLARE v_sqlstate CHAR(5) DEFAULT NULL;
     DECLARE v_mysql_errno INT DEFAULT NULL;
@@ -35,11 +48,15 @@ BEGIN
             v_mysql_errno = MYSQL_ERRNO,
             v_error_message = MESSAGE_TEXT;
 
+        -- Desfaz DELETE/INSERT da Silver caso qualquer validação falhe.
         ROLLBACK;
+
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_silver_scope_dates;
+
         SET v_finished_at = NOW();
 
         IF v_execution_id IS NOT NULL THEN
-            UPDATE etl_execution_log
+            UPDATE bp_datalake.etl_execution_log
             SET
                 execution_status = 'ERROR',
                 finished_at = v_finished_at,
@@ -53,6 +70,11 @@ BEGIN
                     ' | SQLSTATE ', v_sqlstate
                 ),
                 error_message = v_error_message,
+                audit_details = JSON_OBJECT(
+                    'scope_dates', v_scope_dates,
+                    'deleted_rows', v_deleted_rows,
+                    'target_scope_rows', v_target_rows
+                ),
                 execution_duration_seconds = TIMESTAMPDIFF(
                     SECOND, v_started_at, v_finished_at
                 )
@@ -71,7 +93,7 @@ BEGIN
 
     SET v_started_at = NOW();
 
-    INSERT INTO etl_execution_log (
+    INSERT INTO bp_datalake.etl_execution_log (
         procedure_name,
         source_table,
         target_table,
@@ -90,31 +112,102 @@ BEGIN
 
     SET v_execution_id = LAST_INSERT_ID();
 
+
+    /*
+    =========================================================
+    04. DEFINIR ESCOPO INCREMENTAL PELAS DATAS DA STAGING
+    =========================================================
+
+    Exemplo:
+        staging contém 2026-09-10 e 2026-09-15
+
+    Esta execução processa SOMENTE:
+        2026-09-10
+        2026-09-15
+
+    Não processa o intervalo entre essas datas.
+    =========================================================
+    */
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_silver_scope_dates;
+
+    CREATE TEMPORARY TABLE tmp_z17_silver_scope_dates (
+        issuance_date DATE NOT NULL,
+        PRIMARY KEY (issuance_date)
+    );
+
+    INSERT INTO tmp_z17_silver_scope_dates (
+        issuance_date
+    )
+    SELECT DISTINCT
+        issuance_date
+    FROM bp_datalake.stg_zsdbil17_faturamento
+    WHERE issuance_date IS NOT NULL;
+
     SELECT COUNT(*)
-    INTO v_source_rows
-    FROM bronze_zsdbil17_faturamento;
+    INTO v_scope_dates
+    FROM tmp_z17_silver_scope_dates;
+
+    IF v_scope_dates = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT =
+                'Load Silver Z17 bloqueado: nenhuma issuance_date valida na staging.';
+    END IF;
 
 
     /*
     =========================================================
-    04. FULL REFRESH BRONZE -> SILVER
+    05. CONTAR A BRONZE SOMENTE NO ESCOPO RECEBIDO
     =========================================================
 
-    Responsabilidade desta procedure:
-    - carregar todas as linhas da Bronze;
-    - não filtrar CFOP, NCM, chave ou status;
-    - realizar somente conversões técnicas seguras;
-    - valor incompatível com o tipo da Silver vira NULL.
+    A consistência Staging -> Bronze já foi validada pela
+    sp_stg_reconcile_zsdbil17_bronze.
 
-    DELETE é usado no lugar de TRUNCATE para permitir ROLLBACK.
+    Aqui a responsabilidade é outra:
+        Bronze do escopo = Silver recarregada do escopo.
+    =========================================================
+    */
+
+    SELECT COUNT(*)
+    INTO v_source_rows
+    FROM bp_datalake.bronze_zsdbil17_faturamento AS b
+    INNER JOIN tmp_z17_silver_scope_dates AS d
+        ON d.issuance_date = b.issuance_date;
+
+    IF v_source_rows = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT =
+                'Load Silver Z17 bloqueado: nenhuma linha Bronze encontrada para as datas da staging.';
+    END IF;
+
+
+    /*
+    =========================================================
+    06. REFRESH INCREMENTAL BRONZE -> SILVER
+    =========================================================
+
+    Não apagamos mais a Silver inteira.
+
+    Para cada issuance_date recebida na staging:
+        1. remove a versão atual da Silver;
+        2. recarrega da Bronze já reconciliada;
+        3. valida a quantidade;
+        4. COMMIT somente se tudo estiver consistente.
+
+    As conversões técnicas abaixo permanecem exatamente iguais.
     =========================================================
     */
 
     START TRANSACTION;
 
-    DELETE FROM silver_zsdbil17_outbound_movements;
+    DELETE s
+    FROM bp_datalake.silver_zsdbil17_outbound_movements AS s
+    INNER JOIN tmp_z17_silver_scope_dates AS d
+        ON d.issuance_date = s.issuance_date;
 
-    INSERT INTO silver_zsdbil17_outbound_movements (
+    SET v_deleted_rows = ROW_COUNT();
+
+    INSERT INTO bp_datalake.silver_zsdbil17_outbound_movements (
         id_bronze,
         reconciliation_hash,
         sap_document,
@@ -453,13 +546,35 @@ BEGIN
         b.first_seen_at AS first_seen_at,
         b.last_seen_at AS last_seen_at,
         b.missing_since AS missing_since
-    FROM bronze_zsdbil17_faturamento AS b;
+    FROM bp_datalake.bronze_zsdbil17_faturamento AS b
+    INNER JOIN tmp_z17_silver_scope_dates AS d
+        ON d.issuance_date = b.issuance_date;
 
     SET v_loaded_rows = ROW_COUNT();
 
+    /*
+    =========================================================
+    07. VALIDAR CARGA DO ESCOPO
+    =========================================================
+    */
+
     IF v_loaded_rows <> v_source_rows THEN
         SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Load base inconsistente: total Silver diferente da Bronze';
+            SET MESSAGE_TEXT =
+                'Load Silver Z17 inconsistente: quantidade inserida diferente da Bronze no escopo.';
+    END IF;
+
+    -- Segunda proteção: confere o estado final da Silver nas datas processadas.
+    SELECT COUNT(*)
+    INTO v_target_rows
+    FROM bp_datalake.silver_zsdbil17_outbound_movements AS s
+    INNER JOIN tmp_z17_silver_scope_dates AS d
+        ON d.issuance_date = s.issuance_date;
+
+    IF v_target_rows <> v_source_rows THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT =
+                'Load Silver Z17 inconsistente: total final da Silver diferente da Bronze no escopo.';
     END IF;
 
     COMMIT;
@@ -467,13 +582,15 @@ BEGIN
 
     /*
     =========================================================
-    05. FINALIZAÇÃO
+    08. LIMPEZA E FINALIZAÇÃO
     =========================================================
     */
 
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_silver_scope_dates;
+
     SET v_finished_at = NOW();
 
-    UPDATE etl_execution_log
+    UPDATE bp_datalake.etl_execution_log
     SET
         execution_status = 'SUCCESS',
         finished_at = v_finished_at,
@@ -484,6 +601,11 @@ BEGIN
         rejected_rows = 0,
         error_code = NULL,
         error_message = NULL,
+        audit_details = JSON_OBJECT(
+            'scope_dates', v_scope_dates,
+            'deleted_rows', v_deleted_rows,
+            'target_scope_rows', v_target_rows
+        ),
         execution_duration_seconds = TIMESTAMPDIFF(
             SECOND, v_started_at, v_finished_at
         )
@@ -492,8 +614,11 @@ BEGIN
     SELECT
         v_execution_id AS execution_id,
         'SUCCESS' AS execution_status,
-        v_source_rows AS source_rows,
-        v_loaded_rows AS loaded_rows,
+        v_scope_dates AS datas_processadas,
+        v_source_rows AS bronze_rows_escopo,
+        v_deleted_rows AS silver_rows_removidas,
+        v_loaded_rows AS silver_rows_inseridas,
+        v_target_rows AS silver_rows_finais_escopo,
         TIMESTAMPDIFF(
             SECOND, v_started_at, v_finished_at
         ) AS execution_duration_seconds;
