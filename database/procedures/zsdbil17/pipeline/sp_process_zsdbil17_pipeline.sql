@@ -1,8 +1,8 @@
-DROP PROCEDURE IF EXISTS bp_datalake.sp_process_zsdbil17_pipeline_v2;
+DROP PROCEDURE IF EXISTS bp_datalake.sp_process_zsdbil17_pipeline;
 
 DELIMITER $$
 
-CREATE PROCEDURE bp_datalake.sp_process_zsdbil17_pipeline_v2()
+CREATE PROCEDURE bp_datalake.sp_process_zsdbil17_pipeline()
 BEGIN
 
     DECLARE v_pipeline_execution_id BIGINT DEFAULT NULL;
@@ -76,7 +76,7 @@ BEGIN
         created_at
     )
     VALUES (
-        'sp_process_zsdbil17_pipeline_v2',
+        'sp_process_zsdbil17_pipeline',
         'stg_zsdbil17_faturamento',
         'gold_zsdbil17_faturamento',
         'RUNNING',
