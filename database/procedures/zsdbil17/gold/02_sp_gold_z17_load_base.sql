@@ -38,7 +38,9 @@ Fluxo:
     3. selecionar somente o registro mais recente
 
     4. somente DEPOIS do ranking validar:
-            invoice_number preenchido
+
+           invoice_number preenchido
+
            access_key_status = 'VALID'
 
            source_status IN (
@@ -414,6 +416,7 @@ BEGIN
             OR TRIM(ship_to_party_code) NOT LIKE 'CBY%'
         );
 
+
     /*
     Registros classificados como veículo e mais recentes
     por chassi, mas não elegíveis para a Gold.
@@ -482,6 +485,15 @@ BEGIN
 
         sap_document,
         sales_order_number,
+
+        billing_number_vf01,
+        iva,
+        dir_fiscal_icms,
+        dir_fiscal_ipi,
+        dir_fiscal_iss,
+        dir_fiscal_cofins,
+        dir_fiscal_pis,
+
         invoice_series,
 
         no_do_motor,
@@ -643,6 +655,47 @@ BEGIN
             ''
         ),
 
+        /*
+        ========================================================
+        NOVOS CAMPOS FISCAIS / SAP
+        ========================================================
+        */
+
+        NULLIF(
+            TRIM(s.billing_number_vf01),
+            ''
+        ),
+
+        NULLIF(
+            TRIM(s.iva),
+            ''
+        ),
+
+        NULLIF(
+            TRIM(s.dir_fiscal_icms),
+            ''
+        ),
+
+        NULLIF(
+            TRIM(s.dir_fiscal_ipi),
+            ''
+        ),
+
+        NULLIF(
+            TRIM(s.dir_fiscal_iss),
+            ''
+        ),
+
+        NULLIF(
+            TRIM(s.dir_fiscal_cofins),
+            ''
+        ),
+
+        NULLIF(
+            TRIM(s.dir_fiscal_pis),
+            ''
+        ),
+
         NULLIF(
             TRIM(s.invoice_series),
             ''
@@ -725,7 +778,7 @@ BEGIN
 
         v_execution_id
 
-   FROM tmp_gold_z17_latest AS s
+    FROM tmp_gold_z17_latest AS s
 
     WHERE
         s.access_key_status = 'VALID'
