@@ -34,14 +34,17 @@ BEGIN
             SET
                 execution_status = 'ERROR',
                 finished_at = v_finished_at,
+
                 execution_duration_seconds =
                     TIMESTAMPDIFF(
                         MICROSECOND,
                         v_started_at,
                         v_finished_at
                     ) / 1000000,
+
                 error_code = v_error_code,
                 error_message = v_error_message
+
             WHERE id_execution = v_pipeline_execution_id;
 
         END IF;
@@ -62,7 +65,7 @@ BEGIN
 
     /*
     =========================================================
-    2. REGISTRA INÍCIO DA PIPELINE V2
+    2. REGISTRA INÍCIO DA PIPELINE
     =========================================================
     */
 
@@ -135,7 +138,7 @@ BEGIN
 
     /*
     =========================================================
-    8. GOLD V2 - LOAD BASE
+    8. GOLD - LOAD BASE
     =========================================================
     */
 
@@ -144,7 +147,7 @@ BEGIN
 
     /*
     =========================================================
-    9. GOLD V2 - TIPO DE VENDA
+    9. GOLD - TIPO DE VENDA
     =========================================================
     */
 
@@ -153,7 +156,7 @@ BEGIN
 
     /*
     =========================================================
-    10. GOLD V2 - ENRIQUECIMENTOS
+    10. GOLD - ENRIQUECIMENTOS
     =========================================================
     */
 
@@ -162,7 +165,7 @@ BEGIN
 
     /*
     =========================================================
-    11. GOLD V2 - DIRECT SALES
+    11. GOLD - DIRECT SALES
     =========================================================
     */
 
@@ -171,7 +174,24 @@ BEGIN
 
     /*
     =========================================================
-    12. FINALIZA PIPELINE
+    12. GOLD - APPEND LEGACY 2024/2025
+    =========================================================
+
+    O histórico Legacy entra somente após o processamento
+    completo da Gold atual.
+
+    A procedure Legacy é APPEND ONLY e não altera registros
+    CURRENT já existentes na Gold.
+
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_gold_z17_append_legacy_2024_2025();
+
+
+    /*
+    =========================================================
+    13. FINALIZA PIPELINE
     =========================================================
     */
 
@@ -181,28 +201,35 @@ BEGIN
     SET
         execution_status = 'SUCCESS',
         finished_at = v_finished_at,
+
         execution_duration_seconds =
             TIMESTAMPDIFF(
                 MICROSECOND,
                 v_started_at,
                 v_finished_at
             ) / 1000000,
+
         error_code = NULL,
         error_message = NULL
+
     WHERE id_execution = v_pipeline_execution_id;
 
 
     /*
     =========================================================
-    13. RETORNO FINAL
+    14. RETORNO FINAL
     =========================================================
     */
 
     SELECT
         v_pipeline_execution_id AS pipeline_execution_id,
+
         'SUCCESS' AS execution_status,
+
         'gold_zsdbil17_faturamento' AS target_table,
+
         v_started_at AS started_at,
+
         v_finished_at AS finished_at,
 
         ROUND(
@@ -213,6 +240,7 @@ BEGIN
             ) / 1000000,
             2
         ) AS execution_duration_seconds;
+
 
 END$$
 
