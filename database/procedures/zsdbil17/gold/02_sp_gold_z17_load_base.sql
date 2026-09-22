@@ -26,16 +26,20 @@ Granularidade:
 
 Fluxo:
 
-    1. considerar somente:
+    1. considerar somente candidatos de faturamento:
            cfop_car = 'YES'
+           chassis_serial_number preenchido
+           ship_to_party_code não pode iniciar com 'CBY'
 
     2. rankear por chassi:
 
            issuance_date DESC
+           proc_time DESC
            invoice_number DESC
            id_bronze DESC
 
     3. selecionar somente o registro mais recente
+       entre os candidatos não-CBY
 
     4. somente DEPOIS do ranking validar:
 
@@ -47,8 +51,6 @@ Fluxo:
                'ACTIVE',
                'UNKNOWN'
            )
-
-           ship_to_party_code não pode iniciar com 'CBY'
 
 ============================================================
 REGRA DE SOURCE_STATUS
@@ -77,31 +79,32 @@ REGRA DE SHIP-TO
 ============================================================
 
 Códigos iniciados por 'CBY' representam entidades internas
-e não devem compor a Gold de faturamento de veículos.
+e não devem disputar a posição de faturamento válido na Gold.
 
 IMPORTANTE:
 
-O filtro CBY é aplicado somente após o ranking.
+O filtro CBY é aplicado ANTES do ranking.
 
-Isso evita fallback para uma NF histórica antiga caso
-o registro mais recente do chassi seja CBY.
+Assim, movimentos internos CBY são retirados do universo
+de candidatos antes de escolher o faturamento mais recente.
 
 ============================================================
 IMPORTANTE
 ============================================================
 
-Não existe fallback para uma NF antiga.
+Não existe fallback para uma NF antiga por falha de validade.
+
+Depois que o registro não-CBY mais recente é escolhido,
+se ele estiver CANCELLED, MISSING, MIXED ou com chave inválida,
+o chassi não entra na Gold.
 
 Exemplo:
 
-    NF100 -> ACTIVE / VALID / dealer externo
-    NF250 -> ACTIVE / VALID / CBYDBR08
+    NF100 -> 17:48 / ACTIVE / VALID / CBYDBR70
+    NF200 -> 21:30 / ACTIVE / VALID / dealer externo
 
-NF250 é o registro mais recente.
-
-Resultado:
-
-    o chassi NÃO entra na Gold.
+NF100 é removida do universo de candidatos por ser CBY.
+NF200 é o registro não-CBY mais recente e segue para validação.
 
 ============================================================
 ESTRATÉGIA ATUAL
@@ -109,7 +112,7 @@ ESTRATÉGIA ATUAL
 
 FULL REFRESH TRANSACIONAL.
 
-A Gold v2 é apagada e recriada a cada execução.
+A Gold é apagada e recriada a cada execução.
 
 DELETE é utilizado em vez de TRUNCATE para permitir ROLLBACK.
 
@@ -315,13 +318,18 @@ BEGIN
 
     IMPORTANTE:
 
-    source_status, access_key_status e ship_to_party_code
-    NÃO são utilizados antes do ranking.
+    ship_to_party_code é filtrado ANTES do ranking porque
+    códigos CBY representam movimentos internos e não devem
+    disputar a posição de faturamento válido.
 
-    Primeiro determinamos qual é o registro mais recente
-    daquele chassi.
+    source_status e access_key_status NÃO são utilizados antes
+    do ranking.
 
-    Isso impede fallback para uma NF histórica antiga.
+    Primeiro determinamos o registro não-CBY mais recente
+    daquele chassi. Depois validamos o estado desse registro.
+
+    Isso permite ignorar movimentos internos CBY sem criar
+    fallback por cancelamento, ausência ou chave inválida.
     ============================================================
     */
 
@@ -345,6 +353,7 @@ BEGIN
 
                 ORDER BY
                     s.issuance_date DESC,
+                    s.proc_time DESC,
                     s.invoice_number DESC,
                     s.id_bronze DESC
 
@@ -359,6 +368,11 @@ BEGIN
                 TRIM(s.chassis_serial_number),
                 ''
             ) IS NOT NULL
+
+            AND (
+                s.ship_to_party_code IS NULL
+                OR TRIM(s.ship_to_party_code) NOT LIKE 'CBY%'
+            )
 
     ) AS ranked
 
@@ -388,7 +402,10 @@ BEGIN
     - access_key_status = VALID
     - invoice_number preenchido
     - source_status = ACTIVE ou UNKNOWN
-    - ship_to_party_code não pode iniciar com CBY
+
+    Observação:
+    - ship_to_party_code iniciado por CBY já foi eliminado
+      antes do ranking.
 
     ============================================================
     */
@@ -409,11 +426,6 @@ BEGIN
         AND source_status IN (
             'ACTIVE',
             'UNKNOWN'
-        )
-
-        AND (
-            ship_to_party_code IS NULL
-            OR TRIM(ship_to_party_code) NOT LIKE 'CBY%'
         );
 
 
@@ -791,11 +803,6 @@ BEGIN
         AND s.source_status IN (
             'ACTIVE',
             'UNKNOWN'
-        )
-
-        AND (
-            s.ship_to_party_code IS NULL
-            OR TRIM(s.ship_to_party_code) NOT LIKE 'CBY%'
         );
 
 
