@@ -138,7 +138,30 @@ BEGIN
 
     /*
     =========================================================
-    8. GOLD - LOAD BASE
+    8. SILVER - TIPO DE VENDA
+    =========================================================
+
+    Enriquecimento histórico da Silver.
+
+    Preenche:
+        division_description_enriched
+
+    Prioridade:
+        1. Division
+        2. CFOP como fallback
+        3. UNKNOWN
+
+    Deve executar após o CFOP porque utiliza essa informação
+    como fallback da classificação.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_silver_z17_sales_type();
+
+
+    /*
+    =========================================================
+    9. GOLD - LOAD BASE
     =========================================================
     */
 
@@ -147,7 +170,7 @@ BEGIN
 
     /*
     =========================================================
-    9. GOLD - TIPO DE VENDA
+    10. GOLD - TIPO DE VENDA
     =========================================================
     */
 
@@ -156,7 +179,7 @@ BEGIN
 
     /*
     =========================================================
-    10. GOLD - ENRIQUECIMENTOS
+    11. GOLD - ENRIQUECIMENTOS
     =========================================================
     */
 
@@ -165,7 +188,7 @@ BEGIN
 
     /*
     =========================================================
-    11. GOLD - DIRECT SALES
+    12. GOLD - DIRECT SALES
     =========================================================
     */
 
@@ -174,7 +197,7 @@ BEGIN
 
     /*
     =========================================================
-    12. GOLD - APPEND LEGACY 2024/2025
+    13. GOLD - APPEND LEGACY 2024/2025
     =========================================================
 
     O histórico Legacy entra somente após o processamento
@@ -191,7 +214,32 @@ BEGIN
 
     /*
     =========================================================
-    13. FINALIZA PIPELINE
+    14. DEMO HISTORY - SINCRONIZAÇÃO
+    =========================================================
+
+    Fonte histórica:
+        silver_zsdbil17_outbound_movements
+
+    A execução ocorre somente após o processamento completo
+    da Silver e Gold.
+
+    Responsabilidades:
+        - identificar novos ciclos DEMO;
+        - adicionar novas movimentações do chassi;
+        - atualizar status OPEN / WARNING / OVERDUE / CLOSED;
+        - preservar o histórico já registrado.
+
+    A procedure é idempotente:
+        reexecuções não duplicam eventos já existentes.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_sync_gold_zsdbil17_demo_history();
+
+
+    /*
+    =========================================================
+    15. FINALIZA PIPELINE
     =========================================================
     */
 
@@ -217,7 +265,7 @@ BEGIN
 
     /*
     =========================================================
-    14. RETORNO FINAL
+    16. RETORNO FINAL
     =========================================================
     */
 
