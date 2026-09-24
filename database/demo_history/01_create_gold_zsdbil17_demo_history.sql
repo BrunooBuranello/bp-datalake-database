@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS bp_datalake.gold_zsdbil17_demo_history (
 
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
+    demo_cycle_key VARCHAR(100) DEFAULT NULL,
+    document_key VARCHAR(100) DEFAULT NULL,
+
     -- NF responsável por iniciar o ciclo DEMO.
     -- Permanece igual para todos os eventos daquele ciclo.
     demo_origin_invoice_number VARCHAR(9) NOT NULL,

@@ -39,8 +39,21 @@ Status do ciclo:
     WARNING     -> a partir de 20 dias
     OVERDUE     -> após 30 dias
     CLOSED      -> existe faturamento posterior não cancelado
+                   OU existe um novo DEMO posterior do mesmo chassi
 
-Um novo DEMO do mesmo chassi inicia um novo ciclo.
+Identidade de negócio:
+
+    demo_cycle_key
+        CHASSI-PLANT-NOTA_DEMO-CHAVE_DE_ACESSO_DEMO
+        Identifica o ciclo iniciado pelo DEMO original.
+        A mesma chave é repetida em todos os eventos do ciclo.
+
+    document_key
+        CHASSI-PLANT-NOTA-CHAVE_DE_ACESSO
+        Identifica o documento/evento da linha.
+
+Um novo DEMO do mesmo chassi encerra o ciclo anterior
+e inicia um novo ciclo.
 
 IMPORTANTE:
     Esta procedure NÃO executa DELETE ou TRUNCATE na tabela
@@ -48,6 +61,12 @@ IMPORTANTE:
 
     Novos eventos são inseridos.
     Eventos já existentes são atualizados via UPSERT.
+
+    first_seen_at é preservado.
+    last_seen_at é atualizado quando o evento volta a ser visto.
+
+    warning_sent_at e overdue_sent_at pertencem ao módulo de
+    notificações e NÃO são alterados por esta procedure.
 
 ============================================================
 */
@@ -103,6 +122,20 @@ BEGIN
         d.invoice_number AS demo_invoice_number,
         d.issuance_date AS demo_issuance_date,
         d.dt_carga AS demo_dt_carga,
+        d.plant_code AS demo_plant_code,
+        d.chave_de_acesso AS demo_chave_de_acesso,
+
+        CASE
+            WHEN d.plant_code IS NOT NULL
+             AND d.chave_de_acesso IS NOT NULL
+            THEN CONCAT(
+                d.chassis_serial_number, '-',
+                d.plant_code, '-',
+                d.invoice_number, '-',
+                d.chave_de_acesso
+            )
+            ELSE NULL
+        END AS demo_cycle_key,
 
         LEAD(d.issuance_date) OVER (
             PARTITION BY d.chassis_serial_number
@@ -114,6 +147,17 @@ BEGIN
                 ),
                 d.invoice_number
         ) AS next_demo_date,
+
+        LEAD(d.dt_carga) OVER (
+            PARTITION BY d.chassis_serial_number
+            ORDER BY
+                d.issuance_date,
+                COALESCE(
+                    d.dt_carga,
+                    TIMESTAMP(d.issuance_date)
+                ),
+                d.invoice_number
+        ) AS next_demo_dt_carga,
 
         LEAD(d.invoice_number) OVER (
             PARTITION BY d.chassis_serial_number
@@ -134,6 +178,12 @@ BEGIN
 
             TRIM(s.invoice_number)
                 AS invoice_number,
+
+            NULLIF(TRIM(s.plant_code), '')
+                AS plant_code,
+
+            NULLIF(TRIM(s.chave_de_acesso), '')
+                AS chave_de_acesso,
 
             s.issuance_date,
             s.dt_carga,
@@ -235,6 +285,18 @@ BEGIN
     CREATE TEMPORARY TABLE tmp_demo_movements AS
 
     SELECT
+        CASE
+            WHEN m.plant_code IS NOT NULL
+             AND m.chave_de_acesso IS NOT NULL
+            THEN CONCAT(
+                m.chassis_serial_number, '-',
+                m.plant_code, '-',
+                m.invoice_number, '-',
+                m.chave_de_acesso
+            )
+            ELSE NULL
+        END AS document_key,
+
         m.chave_de_acesso,
         m.chassis_serial_number,
 
@@ -281,7 +343,8 @@ BEGIN
     FROM (
 
         SELECT
-            s.chave_de_acesso,
+            NULLIF(TRIM(s.chave_de_acesso), '')
+                AS chave_de_acesso,
 
             TRIM(s.chassis_serial_number)
                 AS chassis_serial_number,
@@ -323,7 +386,8 @@ BEGIN
 
             s.access_key_status,
 
-            s.plant_code,
+            NULLIF(TRIM(s.plant_code), '')
+                AS plant_code,
 
             /*
             Campo atualmente inexistente na Silver.
@@ -437,7 +501,11 @@ BEGIN
                 AS demo_origin_invoice_number,
 
             s.demo_issuance_date,
+            s.demo_cycle_key,
+            s.next_demo_date,
+            s.next_demo_dt_carga,
 
+            m.document_key,
             m.chave_de_acesso,
             m.chassis_serial_number,
 
@@ -566,8 +634,32 @@ BEGIN
                     m.issuance_date =
                         s.next_demo_date
 
-                    AND m.invoice_number <
-                        s.next_demo_invoice
+                    AND (
+                        COALESCE(
+                            m.dt_carga,
+                            TIMESTAMP(m.issuance_date)
+                        )
+                        <
+                        COALESCE(
+                            s.next_demo_dt_carga,
+                            TIMESTAMP(s.next_demo_date)
+                        )
+
+                        OR (
+                            COALESCE(
+                                m.dt_carga,
+                                TIMESTAMP(m.issuance_date)
+                            )
+                            =
+                            COALESCE(
+                                s.next_demo_dt_carga,
+                                TIMESTAMP(s.next_demo_date)
+                            )
+
+                            AND m.invoice_number <
+                                s.next_demo_invoice
+                        )
+                    )
                 )
             )
 
@@ -589,6 +681,9 @@ BEGIN
         - encerra o ciclo DEMO.
 
     A própria NF DEMO CANCELLED também encerra o ciclo.
+
+    Se não houver movimentação válida antes do próximo DEMO,
+    o próximo DEMO encerra o ciclo anterior e inicia outro ciclo.
     ============================================================
     */
 
@@ -603,6 +698,9 @@ BEGIN
                 THEN 'CLOSED'
 
             WHEN x.first_valid_next_invoice IS NOT NULL
+                THEN 'CLOSED'
+
+            WHEN x.next_demo_date IS NOT NULL
                 THEN 'CLOSED'
 
             WHEN CURRENT_DATE >
@@ -634,6 +732,11 @@ BEGIN
             WHEN x.first_valid_next_invoice IS NOT NULL
                 THEN TIMESTAMP(
                     x.first_valid_next_invoice
+                )
+
+            WHEN x.next_demo_date IS NOT NULL
+                THEN TIMESTAMP(
+                    x.next_demo_date
                 )
 
             ELSE NULL
@@ -729,10 +832,16 @@ BEGIN
 
     Se uma movimentação desaparecer da Silver posteriormente,
     o registro já existente no histórico não é removido.
+
+    first_seen_at não é atualizado.
+    warning_sent_at e overdue_sent_at não participam do UPSERT.
     ============================================================
     */
 
     INSERT INTO bp_datalake.gold_zsdbil17_demo_history (
+
+        demo_cycle_key,
+        document_key,
 
         demo_origin_invoice_number,
         event_sequence,
@@ -790,6 +899,9 @@ BEGIN
     )
 
     SELECT
+
+        demo_cycle_key,
+        document_key,
 
         demo_origin_invoice_number,
 
@@ -878,14 +990,40 @@ BEGIN
 
     ON DUPLICATE KEY UPDATE
 
+        /*
+        As chaves de negócio são estáveis:
+        - se já foram gravadas, preservamos;
+        - se ainda eram NULL, preenchemos quando a fonte permitir.
+        */
+        demo_cycle_key =
+            COALESCE(
+                bp_datalake.gold_zsdbil17_demo_history.demo_cycle_key,
+                VALUES(demo_cycle_key)
+            ),
+
+        document_key =
+            COALESCE(
+                bp_datalake.gold_zsdbil17_demo_history.document_key,
+                VALUES(document_key)
+            ),
+
         event_sequence =
             VALUES(event_sequence),
 
         event_type =
             VALUES(event_type),
 
+        /*
+        CLOSED é terminal no histórico. Uma execução posterior
+        não reabre o ciclo caso a movimentação deixe de aparecer
+        momentaneamente na Silver.
+        */
         demo_status =
-            VALUES(demo_status),
+            CASE
+                WHEN bp_datalake.gold_zsdbil17_demo_history.demo_status = 'CLOSED'
+                    THEN 'CLOSED'
+                ELSE VALUES(demo_status)
+            END,
 
         demo_started_at =
             VALUES(demo_started_at),
@@ -896,8 +1034,14 @@ BEGIN
         due_date =
             VALUES(due_date),
 
+        /*
+        A primeira data de fechamento confirmada é preservada.
+        */
         closed_at =
-            VALUES(closed_at),
+            COALESCE(
+                bp_datalake.gold_zsdbil17_demo_history.closed_at,
+                VALUES(closed_at)
+            ),
 
         chave_de_acesso =
             VALUES(chave_de_acesso),
