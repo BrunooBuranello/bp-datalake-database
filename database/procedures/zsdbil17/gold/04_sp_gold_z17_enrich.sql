@@ -23,6 +23,7 @@ BEGIN
     - Filtrar CFOP de veículo
     - Deduplicar chassis
     - Definir sales type / division
+
     ============================================================
     */
 
@@ -89,15 +90,40 @@ BEGIN
     ============================================================
 
     Origem:
-        silver.mapping_dealer_expansion_unic
+        bronze.mapping_dealer_expansion
 
     Chave:
         ship_to_party_code -> sap_code
+
+    Escopo:
+        somente registros:
+        record_source = 'ZSDBIL17_CURRENT'
+
+    Prioridade de status:
+        1. DN
+        2. OLD
+        3. Pending
+        4. Pátio
+        5. Yard
+        6. Store
+        99. demais status
+
+    Regra:
+        - Apenas uma linha é escolhida por sap_code.
+        - DN sempre possui prioridade.
+        - Se DN não existir, segue a ordem acima.
+        - Chave normalizada para 10 posições.
+        - Legacy não é alterado.
+        - Se o sap_code não existir no mapping:
+              store_name_crm = UNKNOWN
+              dealer_group   = UNKNOWN
+              brand_dealer   = UNKNOWN
 
     Destinos:
         store_name_crm
         dealer_group
         brand_dealer
+
     ============================================================
     */
 
@@ -113,14 +139,29 @@ BEGIN
 
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
-    WHERE EXISTS (
+    WHERE g.record_source = 'ZSDBIL17_CURRENT'
+
+      AND EXISTS (
 
         SELECT 1
 
-        FROM silver.mapping_dealer_expansion_unic AS d
+        FROM bronze.mapping_dealer_expansion AS d
 
-        WHERE TRIM(g.ship_to_party_code) =
-              LPAD(CAST(d.sap_code AS CHAR), 10, '0')
+        WHERE d.sap_code IS NOT NULL
+
+          AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
+
+          AND LPAD(
+                TRIM(CAST(g.ship_to_party_code AS CHAR)),
+                10,
+                '0'
+              )
+              =
+              LPAD(
+                TRIM(CAST(d.sap_code AS CHAR)),
+                10,
+                '0'
+              )
 
     );
 
@@ -133,51 +174,217 @@ BEGIN
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
-    LEFT JOIN silver.mapping_dealer_expansion_unic AS d
-        ON TRIM(g.ship_to_party_code) =
-           LPAD(CAST(d.sap_code AS CHAR), 10, '0')
+    LEFT JOIN (
+
+        SELECT
+            ranked.sap_code,
+            ranked.store_name_crm,
+            ranked.store_name,
+            ranked.dealer_group,
+            ranked.brand,
+            ranked.status
+
+        FROM (
+
+            SELECT
+                d.sap_code,
+                d.store_name_crm,
+                d.store_name,
+                d.dealer_group,
+                d.brand,
+                d.status,
+
+                ROW_NUMBER() OVER (
+                    PARTITION BY d.sap_code
+                    ORDER BY
+
+                        CASE TRIM(d.status)
+
+                            WHEN 'DN'
+                                THEN 1
+
+                            WHEN 'OLD'
+                                THEN 2
+
+                            WHEN 'Pending'
+                                THEN 3
+
+                            WHEN 'Pátio'
+                                THEN 4
+
+                            WHEN 'Yard'
+                                THEN 5
+
+                            WHEN 'Store'
+                                THEN 6
+
+                            ELSE 99
+
+                        END,
+
+                        /*
+                        Desempate técnico caso existam duas linhas
+                        com mesmo sap_code e mesmo status.
+                        */
+                        COALESCE(TRIM(d.store_name_crm), ''),
+                        COALESCE(TRIM(d.store_name), ''),
+                        COALESCE(TRIM(d.dealer_group), '')
+
+                ) AS rn
+
+            FROM bronze.mapping_dealer_expansion AS d
+
+            WHERE d.sap_code IS NOT NULL
+              AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
+
+        ) AS ranked
+
+        WHERE ranked.rn = 1
+
+    ) AS d
+
+        ON LPAD(
+               TRIM(CAST(g.ship_to_party_code AS CHAR)),
+               10,
+               '0'
+           )
+           =
+           LPAD(
+               TRIM(CAST(d.sap_code AS CHAR)),
+               10,
+               '0'
+           )
+
 
     SET
+
         g.store_name_crm =
-            COALESCE(
-                NULLIF(TRIM(d.store_name_crm), ''),
-                NULLIF(TRIM(d.store_name), '')
-            ),
+            CASE
+
+                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                    THEN 'UNKNOWN'
+
+                WHEN d.sap_code IS NULL
+                    THEN 'UNKNOWN'
+
+                ELSE COALESCE(
+                    NULLIF(TRIM(d.store_name_crm), ''),
+                    NULLIF(TRIM(d.store_name), ''),
+                    'UNKNOWN'
+                )
+
+            END,
+
 
         g.dealer_group =
-            NULLIF(
-                TRIM(d.dealer_group),
-                ''
-            ),
+            CASE
+
+                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                    THEN 'UNKNOWN'
+
+                WHEN d.sap_code IS NULL
+                    THEN 'UNKNOWN'
+
+                ELSE COALESCE(
+                    NULLIF(TRIM(d.dealer_group), ''),
+                    'UNKNOWN'
+                )
+
+            END,
+
 
         g.brand_dealer =
-            NULLIF(
-                TRIM(d.brand),
-                ''
-            )
+            CASE
 
-    WHERE
+                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                    THEN 'UNKNOWN'
+
+                WHEN d.sap_code IS NULL
+                    THEN 'UNKNOWN'
+
+                ELSE COALESCE(
+                    NULLIF(TRIM(d.brand), ''),
+                    'UNKNOWN'
+                )
+
+            END
+
+
+    WHERE g.record_source = 'ZSDBIL17_CURRENT'
+
+      AND (
 
         NOT (
+
             g.store_name_crm
+
             <=>
-            COALESCE(
-                NULLIF(TRIM(d.store_name_crm), ''),
-                NULLIF(TRIM(d.store_name), '')
-            )
+
+            CASE
+
+                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                    THEN 'UNKNOWN'
+
+                WHEN d.sap_code IS NULL
+                    THEN 'UNKNOWN'
+
+                ELSE COALESCE(
+                    NULLIF(TRIM(d.store_name_crm), ''),
+                    NULLIF(TRIM(d.store_name), ''),
+                    'UNKNOWN'
+                )
+
+            END
+
         )
 
         OR NOT (
+
             g.dealer_group
+
             <=>
-            NULLIF(TRIM(d.dealer_group), '')
+
+            CASE
+
+                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                    THEN 'UNKNOWN'
+
+                WHEN d.sap_code IS NULL
+                    THEN 'UNKNOWN'
+
+                ELSE COALESCE(
+                    NULLIF(TRIM(d.dealer_group), ''),
+                    'UNKNOWN'
+                )
+
+            END
+
         )
 
         OR NOT (
+
             g.brand_dealer
+
             <=>
-            NULLIF(TRIM(d.brand), '')
-        );
+
+            CASE
+
+                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                    THEN 'UNKNOWN'
+
+                WHEN d.sap_code IS NULL
+                    THEN 'UNKNOWN'
+
+                ELSE COALESCE(
+                    NULLIF(TRIM(d.brand), ''),
+                    'UNKNOWN'
+                )
+
+            END
+
+        )
+
+    );
 
 
     SET v_dealer_updated = ROW_COUNT();
@@ -196,6 +403,7 @@ BEGIN
 
     Destino:
         payment_condition_description_dim
+
     ============================================================
     */
 
@@ -239,6 +447,7 @@ BEGIN
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
     LEFT JOIN bp_datalake.dim_cond_pagamento AS d
+
         ON TRIM(g.payment_condition) =
            TRIM(d.cond_pgto_sap)
 
@@ -317,6 +526,7 @@ BEGIN
 
     Destino:
         plant_description
+
     ============================================================
     */
 
@@ -360,6 +570,7 @@ BEGIN
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
     LEFT JOIN bp_datalake.dim_plant AS d
+
         ON TRIM(g.plant_code) =
            TRIM(d.plant_code)
 
@@ -436,6 +647,7 @@ BEGIN
 
     Destino:
         origem_chassi
+
     ============================================================
     */
 
@@ -498,11 +710,8 @@ BEGIN
 
     SELECT
         SUM(origem_chassi IS NOT NULL),
-
         SUM(origem_chassi = 'Importado'),
-
         SUM(origem_chassi = 'Nacional'),
-
         SUM(origem_chassi IS NULL)
 
     INTO
@@ -536,7 +745,6 @@ BEGIN
         'SUCCESS' AS execution_status,
 
         v_started_at AS started_at,
-
         v_finished_at AS finished_at,
 
         TIMESTAMPDIFF(
