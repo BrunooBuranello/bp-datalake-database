@@ -239,7 +239,34 @@ BEGIN
 
     /*
     =========================================================
-    15. FINALIZA PIPELINE
+    15. DEMO HISTORY - ENRIQUECIMENTO DEALER
+    =========================================================
+
+    Origem:
+        bronze.mapping_dealer_expansion
+
+    Chave:
+        ship_to_party_code -> sap_code
+
+    Destinos:
+        dealer_group
+        brand_dealer
+
+    Regra:
+        - utiliza o mapeamento atual do dealer;
+        - aplica a mesma prioridade utilizada na Gold principal;
+        - registros sem correspondência recebem UNKNOWN;
+        - não altera regras do ciclo DEMO;
+        - não altera campos operacionais do BP.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_gold_z17_demo_enrich_dealer();
+
+
+    /*
+    =========================================================
+    16. FINALIZA PIPELINE
     =========================================================
     */
 
@@ -265,7 +292,7 @@ BEGIN
 
     /*
     =========================================================
-    16. RETORNO FINAL
+    17. RETORNO FINAL
     =========================================================
     */
 
