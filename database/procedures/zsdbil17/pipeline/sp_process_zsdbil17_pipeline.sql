@@ -214,7 +214,34 @@ BEGIN
 
     /*
     =========================================================
-    14. DEMO HISTORY - SINCRONIZAÇÃO
+    14. GOLD - ENRIQUECIMENTO DE MODELO
+    =========================================================
+
+    Origem:
+        bp_datalake.material_master
+
+    Chave:
+        material -> cod_sap
+
+    Destino:
+        model_simplified
+
+    A execução ocorre após o Legacy para garantir que
+    registros CURRENT e LEGACY recebam o enriquecimento.
+
+    Registros sem correspondência recebem UNKNOWN.
+
+    A procedure é idempotente e possui controle próprio
+    no etl_execution_log.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_gold_z17_enrich_model();
+
+
+    /*
+    =========================================================
+    15. DEMO HISTORY - SINCRONIZAÇÃO
     =========================================================
 
     Fonte histórica:
@@ -239,7 +266,7 @@ BEGIN
 
     /*
     =========================================================
-    15. DEMO HISTORY - ENRIQUECIMENTO DEALER
+    16. DEMO HISTORY - ENRIQUECIMENTO DEALER
     =========================================================
 
     Origem:
@@ -266,7 +293,7 @@ BEGIN
 
     /*
     =========================================================
-    16. FINALIZA PIPELINE
+    17. FINALIZA PIPELINE
     =========================================================
     */
 
@@ -292,7 +319,7 @@ BEGIN
 
     /*
     =========================================================
-    17. RETORNO FINAL
+    18. RETORNO FINAL
     =========================================================
     */
 
