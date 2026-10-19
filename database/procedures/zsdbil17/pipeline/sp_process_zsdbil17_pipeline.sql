@@ -158,6 +158,32 @@ BEGIN
 
     CALL bp_datalake.sp_silver_z17_sales_type();
 
+    /*
+    =========================================================
+    9. SILVER - CLASSIFICAÇÃO DO TIPO DE VEÍCULO
+    =========================================================
+
+    Enriquecimento da Silver por código de material.
+
+    Fontes:
+        dim_zsdbil17_material_exclusion
+        material_master
+
+    Destino:
+        vehicle_type_code
+
+    Prioridade:
+        1. Material na exclusão -> BUS_TRUCK
+        2. Material na master   -> CAR
+        3. Sem correspondência  -> UNKNOWN
+
+    A execução ocorre antes do carregamento da Gold para
+    permitir a aplicação do filtro de elegibilidade.
+
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_silver_z17_vehicle_type();
 
     /*
     =========================================================

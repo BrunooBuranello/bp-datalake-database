@@ -29,6 +29,7 @@ Fluxo:
     1. considerar somente candidatos de faturamento:
            cfop_car = 'YES'
            chassis_serial_number preenchido
+           vehicle_type_code IN ('CAR', 'UNKNOWN')
            ship_to_party_code não pode iniciar com 'CBY'
 
     2. rankear por chassi:
@@ -39,7 +40,7 @@ Fluxo:
            id_bronze DESC
 
     3. selecionar somente o registro mais recente
-       entre os candidatos não-CBY
+       entre os candidatos não-CBY e não-BUS_TRUCK
 
     4. somente DEPOIS do ranking validar:
 
@@ -83,10 +84,10 @@ e não devem disputar a posição de faturamento válido na Gold.
 
 IMPORTANTE:
 
-O filtro CBY é aplicado ANTES do ranking.
+Os filtros CBY e BUS_TRUCK são aplicados ANTES do ranking.
 
-Assim, movimentos internos CBY são retirados do universo
-de candidatos antes de escolher o faturamento mais recente.
+Assim, movimentos internos CBY e materiais BUS/TRUCK são
+retirados dos candidatos antes de escolher a NF mais recente.
 
 ============================================================
 IMPORTANTE
@@ -94,7 +95,7 @@ IMPORTANTE
 
 Não existe fallback para uma NF antiga por falha de validade.
 
-Depois que o registro não-CBY mais recente é escolhido,
+Depois que o candidato não-CBY e não-BUS_TRUCK mais recente é escolhido,
 se ele estiver CANCELLED, MISSING, MIXED ou com chave inválida,
 o chassi não entra na Gold.
 
@@ -305,6 +306,9 @@ BEGIN
     WHERE
         cfop_car = 'YES'
 
+        -- Apenas CAR e UNKNOWN participam do faturamento.
+        AND vehicle_type_code IN ('CAR', 'UNKNOWN')
+
         AND NULLIF(
             TRIM(chassis_serial_number),
             ''
@@ -321,6 +325,13 @@ BEGIN
     ship_to_party_code é filtrado ANTES do ranking porque
     códigos CBY representam movimentos internos e não devem
     disputar a posição de faturamento válido.
+
+    vehicle_type_code também é filtrado ANTES do ranking:
+    CAR e UNKNOWN são elegíveis; BUS_TRUCK é excluído.
+
+    Atenção: se um chassi tiver registro BUS_TRUCK mais
+    recente, uma NF CAR/UNKNOWN anterior poderá ser selecionada.
+    Essa é a regra de escopo definida para o Invoiced DB.
 
     source_status e access_key_status NÃO são utilizados antes
     do ranking.
@@ -363,6 +374,9 @@ BEGIN
 
         WHERE
             s.cfop_car = 'YES'
+
+            -- BUS/TRUCK fica fora do conjunto antes do ROW_NUMBER.
+            AND s.vehicle_type_code IN ('CAR', 'UNKNOWN')
 
             AND NULLIF(
                 TRIM(s.chassis_serial_number),
