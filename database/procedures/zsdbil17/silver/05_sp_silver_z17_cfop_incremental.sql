@@ -1,3 +1,35 @@
+/*
+============================================================
+ZSDBIL17 - SILVER - CLASSIFICACAO INCREMENTAL DE CFOP
+============================================================
+
+Objetivo:
+Classificar cfop_car sem limitar a descoberta de novos
+mapeamentos somente as datas recebidas na staging.
+
+Em cada execucao normal a procedure processa:
+
+1. Todas as linhas pertencentes as datas presentes na staging;
+2. Todo o historico que ainda estiver com cfop_car = 'UNKNOWN'.
+
+O segundo passo garante que, quando um CFOP anteriormente
+desconhecido for cadastrado ou ativado na dim_cfop, o historico
+seja reavaliado na proxima execucao do pipeline. As linhas que
+passarem para YES poderao participar do load full refresh da
+Gold, executado depois desta procedure.
+
+Linhas UNKNOWN que continuarem sem correspondencia ativa na
+dim_cfop permanecem UNKNOWN e serao verificadas novamente na
+proxima execucao.
+
+Importante:
+- O reprocessamento historico e restrito aos UNKNOWN;
+- Classificacoes YES e NO historicas nao sao recalculadas;
+- O mapa considera somente dim_cfop.ativo = 1 e valores
+  normalizados para YES ou NO.
+============================================================
+*/
+
 DELIMITER $$
 
 DROP PROCEDURE IF EXISTS bp_datalake.sp_silver_z17_cfop$$
@@ -16,6 +48,12 @@ BEGIN
     DECLARE v_scope_dates INT DEFAULT 0;
     DECLARE v_scope_rows BIGINT DEFAULT 0;
     DECLARE v_updated_rows BIGINT DEFAULT 0;
+
+    -- Quantidade historica de UNKNOWN revisada em toda execucao.
+    DECLARE v_unknown_rechecked_rows BIGINT DEFAULT 0;
+
+    -- UNKNOWN que encontrou uma classificacao nova (YES ou NO).
+    DECLARE v_unknown_reclassified_rows BIGINT DEFAULT 0;
 
     DECLARE v_yes BIGINT DEFAULT 0;
     DECLARE v_no BIGINT DEFAULT 0;
@@ -76,6 +114,8 @@ BEGIN
                     'cfop_car_column_created', v_column_created,
                     'scope_dates', v_scope_dates,
                     'scope_rows', v_scope_rows,
+                    'unknown_rechecked_rows', v_unknown_rechecked_rows,
+                    'unknown_reclassified_rows', v_unknown_reclassified_rows,
                     'rows_changed', v_updated_rows
                 ),
 
@@ -326,6 +366,62 @@ BEGIN
         SET v_updated_rows = ROW_COUNT();
 
 
+        /*
+        ========================================================
+        5.1. REVISA TODO O HISTORICO AINDA UNKNOWN
+        ========================================================
+
+        A carga incremental por data garante a classificacao das
+        linhas recebidas na execucao atual, mas nao revisitaria um
+        faturamento antigo caso seu CFOP fosse cadastrado depois
+        na dim_cfop.
+
+        Por isso, toda execucao tambem procura todos os UNKNOWN da
+        Silver, independentemente da issuance_date. O INNER JOIN
+        restringe o UPDATE aos CFOPs que agora possuem uma regra
+        ativa e valida no mapa (YES ou NO).
+
+        Registros ainda sem correspondencia nao sao alterados:
+        continuam UNKNOWN e voltam a ser avaliados na proxima
+        execucao do pipeline.
+
+        Linhas da staging que permaneceram UNKNOWN tambem podem
+        fazer parte desta contagem, mas somente serao atualizadas
+        se houver correspondencia no mapa.
+        ========================================================
+        */
+
+        SELECT COUNT(*)
+        INTO v_unknown_rechecked_rows
+
+        FROM bp_datalake.silver_zsdbil17_outbound_movements AS s
+
+        WHERE UPPER(TRIM(s.cfop_car)) = 'UNKNOWN';
+
+
+        UPDATE bp_datalake.silver_zsdbil17_outbound_movements AS s
+
+        INNER JOIN tmp_z17_cfop_map AS m
+            ON m.cfop = TRIM(s.cfop)
+
+        SET
+            s.cfop_car = m.cfop_car
+
+        WHERE UPPER(TRIM(s.cfop_car)) = 'UNKNOWN'
+
+          AND NOT (
+              s.cfop_car <=> m.cfop_car
+          );
+
+
+        SET v_unknown_reclassified_rows = ROW_COUNT();
+
+        -- Consolida alteracoes da staging e do historico UNKNOWN.
+        SET v_updated_rows =
+              v_updated_rows
+            + v_unknown_reclassified_rows;
+
+
         SELECT
             COALESCE(SUM(s.cfop_car = 'YES'), 0),
             COALESCE(SUM(s.cfop_car = 'NO'), 0),
@@ -406,6 +502,8 @@ BEGIN
             'cfop_car_column_created', v_column_created,
             'scope_dates', v_scope_dates,
             'scope_rows', v_scope_rows,
+            'unknown_rechecked_rows', v_unknown_rechecked_rows,
+            'unknown_reclassified_rows', v_unknown_reclassified_rows,
             'rows_changed', v_updated_rows,
             'yes', v_yes,
             'no', v_no,
@@ -438,6 +536,10 @@ BEGIN
 
         v_scope_dates AS scope_dates,
         v_scope_rows AS scope_rows,
+
+        v_unknown_rechecked_rows AS unknown_rechecked_rows,
+        v_unknown_reclassified_rows AS unknown_reclassified_rows,
+
         v_updated_rows AS rows_changed,
 
         v_yes AS yes,
