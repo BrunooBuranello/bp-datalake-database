@@ -268,8 +268,8 @@ BEGIN
                     THEN 'UNKNOWN'
 
                 ELSE COALESCE(
-                    NULLIF(TRIM(d.store_name_crm), ''),
-                    NULLIF(TRIM(d.store_name), ''),
+                    NULLIF(NULLIF(TRIM(d.store_name_crm), ''), '-'),
+                    NULLIF(NULLIF(TRIM(d.store_name), ''), '-'),
                     'UNKNOWN'
                 )
 
@@ -329,8 +329,8 @@ BEGIN
                     THEN 'UNKNOWN'
 
                 ELSE COALESCE(
-                    NULLIF(TRIM(d.store_name_crm), ''),
-                    NULLIF(TRIM(d.store_name), ''),
+                    NULLIF(NULLIF(TRIM(d.store_name_crm), ''), '-'),
+                    NULLIF(NULLIF(TRIM(d.store_name), ''), '-'),
                     'UNKNOWN'
                 )
 
