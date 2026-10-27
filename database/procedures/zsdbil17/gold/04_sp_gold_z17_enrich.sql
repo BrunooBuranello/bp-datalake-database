@@ -1,8 +1,9 @@
+
 DELIMITER $$
 
-DROP PROCEDURE IF EXISTS sp_gold_z17_enrich$$
+DROP PROCEDURE IF EXISTS bp_datalake.sp_gold_z17_enrich$$
 
-CREATE PROCEDURE sp_gold_z17_enrich()
+CREATE PROCEDURE bp_datalake.sp_gold_z17_enrich()
 BEGIN
 
     /*
@@ -10,29 +11,27 @@ BEGIN
     ZSDBIL17 - GOLD ENRICHMENT
     ============================================================
 
-    Responsabilidade:
-    - Enriquecer informações de dealer
-    - Enriquecer condição de pagamento
-    - Enriquecer plant
-    - Identificar origem do chassi
+    Responsabilidades:
+    1. Enriquecimento de dealer pelo CRM
+    2. Fallback de dealer pela dim_plant (BYD Internal)
+    3. Enriquecimento de condição de pagamento
+    4. Enriquecimento de plant
+    5. Identificação da origem do chassi
 
-    Não é responsabilidade desta procedure:
-    - Criar ou alterar estrutura da Gold
-    - Validar chave de acesso
-    - Validar source_status
-    - Filtrar CFOP de veículo
-    - Deduplicar chassis
-    - Definir sales type / division
+    Regras:
+    - Não altera a estrutura da Gold.
+    - Não modifica os registros legacy no enriquecimento
+      de dealer.
+    - Não realiza deduplicação de chassis.
+    - Não define sales type ou division.
+    - O CRM possui prioridade sobre o fallback interno.
 
     ============================================================
     */
 
-
-    /*
-    ============================================================
-    VARIÁVEIS
-    ============================================================
-    */
+    -- ========================================================
+    -- VARIÁVEIS DE CONTROLE
+    -- ========================================================
 
     DECLARE v_source_rows BIGINT DEFAULT 0;
 
@@ -55,11 +54,9 @@ BEGIN
     DECLARE v_finished_at DATETIME;
 
 
-    /*
-    ============================================================
-    TRATAMENTO DE ERRO
-    ============================================================
-    */
+    -- ========================================================
+    -- TRATAMENTO DE ERROS
+    -- ========================================================
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -73,11 +70,9 @@ BEGIN
     START TRANSACTION;
 
 
-    /*
-    ============================================================
-    1. TOTAL DE LINHAS DA GOLD
-    ============================================================
-    */
+    -- ========================================================
+    -- 1. TOTAL DE REGISTROS DA GOLD
+    -- ========================================================
 
     SELECT COUNT(*)
     INTO v_source_rows
@@ -86,18 +81,14 @@ BEGIN
 
     /*
     ============================================================
-    2. DEALER
+    2. ENRIQUECIMENTO DE DEALER
     ============================================================
 
-    Origem:
+    Fonte principal:
         bronze.mapping_dealer_expansion
 
-    Chave:
-        ship_to_party_code -> sap_code
-
-    Escopo:
-        somente registros:
-        record_source = 'ZSDBIL17_CURRENT'
+    Relacionamento:
+        gold.ship_to_party_code = mapping.sap_code
 
     Prioridade de status:
         1. DN
@@ -106,73 +97,67 @@ BEGIN
         4. Pátio
         5. Yard
         6. Store
-        99. demais status
+        99. Demais status
 
-    Regra:
-        - Apenas uma linha é escolhida por sap_code.
-        - DN sempre possui prioridade.
-        - Se DN não existir, segue a ordem acima.
-        - Chave normalizada para 10 posições.
-        - Legacy não é alterado.
-        - Se o sap_code não existir no mapping:
-              store_name_crm = UNKNOWN
-              dealer_group   = UNKNOWN
-              brand_dealer   = UNKNOWN
+    Fallback:
+        bp_datalake.dim_plant
+
+    Relacionamento do fallback:
+        gold.ship_to_party_cnpj = dim_plant.branch_cnpj
+
+    Valor retornado:
+        dim_plant.dealer_fallback
+
+    Categorias permitidas:
+        Asset
+        Asset - Insurance
+        Asset Sale
 
     Destinos:
         store_name_crm
         dealer_group
         brand_dealer
 
+    Escopo:
+        record_source = 'ZSDBIL17_CURRENT'
+
     ============================================================
     */
 
 
-    /*
-    ------------------------------------------------------------
-    2.1 MATCHES ENCONTRADOS
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 2.1 CONTAGEM DE MATCHES NO CRM
+    -- ========================================================
 
     SELECT COUNT(*)
     INTO v_dealer_match
-
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
-
     WHERE g.record_source = 'ZSDBIL17_CURRENT'
-
       AND EXISTS (
-
-        SELECT 1
-
-        FROM bronze.mapping_dealer_expansion AS d
-
-        WHERE d.sap_code IS NOT NULL
-
-          AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
-
-          AND LPAD(
-                TRIM(CAST(g.ship_to_party_code AS CHAR)),
-                10,
-                '0'
-              )
-              =
-              LPAD(
-                TRIM(CAST(d.sap_code AS CHAR)),
-                10,
-                '0'
-              )
-
-    );
+          SELECT 1
+          FROM bronze.mapping_dealer_expansion AS d
+          WHERE d.sap_code IS NOT NULL
+            AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
+            AND LPAD(
+                    TRIM(CAST(g.ship_to_party_code AS CHAR)),
+                    10, '0'
+                ) =
+                LPAD(
+                    TRIM(CAST(d.sap_code AS CHAR)),
+                    10, '0'
+                )
+      );
 
 
-    /*
-    ------------------------------------------------------------
-    2.2 ENRIQUECIMENTO
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 2.2 ENRIQUECIMENTO DO DEALER
+    -- ========================================================
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
+
+    -- --------------------------------------------------------
+    -- MAPEAMENTO PRINCIPAL DO CRM
+    -- --------------------------------------------------------
 
     LEFT JOIN (
 
@@ -199,33 +184,16 @@ BEGIN
                     ORDER BY
 
                         CASE TRIM(d.status)
-
-                            WHEN 'DN'
-                                THEN 1
-
-                            WHEN 'OLD'
-                                THEN 2
-
-                            WHEN 'Pending'
-                                THEN 3
-
-                            WHEN 'Pátio'
-                                THEN 4
-
-                            WHEN 'Yard'
-                                THEN 5
-
-                            WHEN 'Store'
-                                THEN 6
-
+                            WHEN 'DN' THEN 1
+                            WHEN 'OLD' THEN 2
+                            WHEN 'Pending' THEN 3
+                            WHEN 'Pátio' THEN 4
+                            WHEN 'Yard' THEN 5
+                            WHEN 'Store' THEN 6
                             ELSE 99
-
                         END,
 
-                        /*
-                        Desempate técnico caso existam duas linhas
-                        com mesmo sap_code e mesmo status.
-                        */
+                        -- Desempate determinístico
                         COALESCE(TRIM(d.store_name_crm), ''),
                         COALESCE(TRIM(d.store_name), ''),
                         COALESCE(TRIM(d.dealer_group), '')
@@ -244,42 +212,126 @@ BEGIN
     ) AS d
 
         ON LPAD(
-               TRIM(CAST(g.ship_to_party_code AS CHAR)),
-               10,
-               '0'
-           )
-           =
-           LPAD(
-               TRIM(CAST(d.sap_code AS CHAR)),
-               10,
-               '0'
+            TRIM(CAST(g.ship_to_party_code AS CHAR)),
+            10, '0'
+        ) =
+        LPAD(
+            TRIM(CAST(d.sap_code AS CHAR)),
+            10, '0'
+        )
+
+
+    -- --------------------------------------------------------
+    -- FALLBACK PARA FATURAMENTO INTERNO BYD
+    -- --------------------------------------------------------
+    /*
+    A dimensão define o valor BYD Internal.
+
+    A consulta:
+    - Normaliza o CNPJ para 14 dígitos.
+    - Ignora valores nulos, vazios ou '-'.
+    - Evita múltiplos registros por CNPJ.
+    - Ignora CNPJs com classificações divergentes.
+
+    O fallback somente será utilizado quando não houver
+    correspondência no mapeamento principal do CRM.
+    */
+
+    LEFT JOIN (
+
+        SELECT
+            REGEXP_REPLACE(
+                CAST(branch_cnpj AS CHAR),
+                '[^0-9]', ''
+            ) AS cnpj_normalizado,
+
+            MAX(TRIM(dealer_fallback)) AS dealer_fallback
+
+        FROM bp_datalake.dim_plant
+
+        WHERE CHAR_LENGTH(
+            REGEXP_REPLACE(
+                CAST(branch_cnpj AS CHAR),
+                '[^0-9]', ''
+            )
+        ) = 14
+
+          AND NULLIF(
+              NULLIF(TRIM(dealer_fallback), ''),
+              '-'
+          ) IS NOT NULL
+
+        GROUP BY
+            REGEXP_REPLACE(
+                CAST(branch_cnpj AS CHAR),
+                '[^0-9]', ''
+            )
+
+        HAVING COUNT(DISTINCT TRIM(dealer_fallback)) = 1
+
+    ) AS p
+
+        ON BINARY p.cnpj_normalizado =
+           BINARY REGEXP_REPLACE(
+               CAST(g.ship_to_party_cnpj AS CHAR),
+               '[^0-9]', ''
            )
 
+       AND g.division_description IN (
+           'Asset',
+           'Asset - Insurance',
+           'Asset Sale'
+       )
+
+
+    -- --------------------------------------------------------
+    -- ATUALIZAÇÃO DAS TRÊS COLUNAS
+    -- --------------------------------------------------------
 
     SET
 
+        -- STORE NAME CRM
         g.store_name_crm =
             CASE
 
-                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                WHEN d.sap_code IS NULL
+                     AND p.dealer_fallback IS NOT NULL
+                    THEN p.dealer_fallback
+
+                WHEN NULLIF(
+                    TRIM(g.ship_to_party_code), ''
+                ) IS NULL
                     THEN 'UNKNOWN'
 
                 WHEN d.sap_code IS NULL
                     THEN 'UNKNOWN'
 
                 ELSE COALESCE(
-                    NULLIF(NULLIF(TRIM(d.store_name_crm), ''), '-'),
-                    NULLIF(NULLIF(TRIM(d.store_name), ''), '-'),
+                    NULLIF(
+                        NULLIF(TRIM(d.store_name_crm), ''),
+                        '-'
+                    ),
+                    NULLIF(
+                        NULLIF(TRIM(d.store_name), ''),
+                        '-'
+                    ),
                     'UNKNOWN'
                 )
 
             END,
 
 
+        -- DEALER GROUP
         g.dealer_group =
             CASE
 
-                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                WHEN d.sap_code IS NULL
+                     AND p.dealer_fallback IS NOT NULL
+                    THEN p.dealer_fallback
+
+                WHEN NULLIF(
+                    TRIM(g.ship_to_party_code), ''
+                ) IS NULL
                     THEN 'UNKNOWN'
 
                 WHEN d.sap_code IS NULL
@@ -293,10 +345,17 @@ BEGIN
             END,
 
 
+        -- BRAND DEALER
         g.brand_dealer =
             CASE
 
-                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                WHEN d.sap_code IS NULL
+                     AND p.dealer_fallback IS NOT NULL
+                    THEN p.dealer_fallback
+
+                WHEN NULLIF(
+                    TRIM(g.ship_to_party_code), ''
+                ) IS NULL
                     THEN 'UNKNOWN'
 
                 WHEN d.sap_code IS NULL
@@ -309,44 +368,59 @@ BEGIN
 
             END
 
+
+    -- --------------------------------------------------------
+    -- ATUALIZAR SOMENTE REGISTROS DIFERENTES
+    -- --------------------------------------------------------
 
     WHERE g.record_source = 'ZSDBIL17_CURRENT'
 
       AND (
 
         NOT (
-
-            g.store_name_crm
-
-            <=>
+            g.store_name_crm <=>
 
             CASE
 
-                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                WHEN d.sap_code IS NULL
+                     AND p.dealer_fallback IS NOT NULL
+                    THEN p.dealer_fallback
+
+                WHEN NULLIF(
+                    TRIM(g.ship_to_party_code), ''
+                ) IS NULL
                     THEN 'UNKNOWN'
 
                 WHEN d.sap_code IS NULL
                     THEN 'UNKNOWN'
 
                 ELSE COALESCE(
-                    NULLIF(NULLIF(TRIM(d.store_name_crm), ''), '-'),
-                    NULLIF(NULLIF(TRIM(d.store_name), ''), '-'),
+                    NULLIF(
+                        NULLIF(TRIM(d.store_name_crm), ''),
+                        '-'
+                    ),
+                    NULLIF(
+                        NULLIF(TRIM(d.store_name), ''),
+                        '-'
+                    ),
                     'UNKNOWN'
                 )
 
             END
-
         )
 
         OR NOT (
-
-            g.dealer_group
-
-            <=>
+            g.dealer_group <=>
 
             CASE
 
-                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                WHEN d.sap_code IS NULL
+                     AND p.dealer_fallback IS NOT NULL
+                    THEN p.dealer_fallback
+
+                WHEN NULLIF(
+                    TRIM(g.ship_to_party_code), ''
+                ) IS NULL
                     THEN 'UNKNOWN'
 
                 WHEN d.sap_code IS NULL
@@ -358,18 +432,20 @@ BEGIN
                 )
 
             END
-
         )
 
         OR NOT (
-
-            g.brand_dealer
-
-            <=>
+            g.brand_dealer <=>
 
             CASE
 
-                WHEN NULLIF(TRIM(g.ship_to_party_code), '') IS NULL
+                WHEN d.sap_code IS NULL
+                     AND p.dealer_fallback IS NOT NULL
+                    THEN p.dealer_fallback
+
+                WHEN NULLIF(
+                    TRIM(g.ship_to_party_code), ''
+                ) IS NULL
                     THEN 'UNKNOWN'
 
                 WHEN d.sap_code IS NULL
@@ -381,11 +457,9 @@ BEGIN
                 )
 
             END
-
         )
 
     );
-
 
     SET v_dealer_updated = ROW_COUNT();
 
@@ -398,8 +472,8 @@ BEGIN
     Origem:
         bp_datalake.dim_cond_pagamento
 
-    Chave:
-        payment_condition -> cond_pgto_sap
+    Relacionamento:
+        payment_condition = cond_pgto_sap
 
     Destino:
         payment_condition_description_dim
@@ -408,41 +482,31 @@ BEGIN
     */
 
 
-    /*
-    ------------------------------------------------------------
-    3.1 MATCHES VÁLIDOS
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 3.1 MATCHES VÁLIDOS
+    -- ========================================================
 
     SELECT COUNT(*)
     INTO v_payment_match
-
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
-
     WHERE EXISTS (
-
         SELECT 1
-
         FROM bp_datalake.dim_cond_pagamento AS d
 
         WHERE TRIM(g.payment_condition) =
               TRIM(d.cond_pgto_sap)
 
           AND NULLIF(
-                  TRIM(d.payment_term_description_bp),
-                  ''
-              ) IS NOT NULL
+              TRIM(d.payment_term_description_bp), ''
+          ) IS NOT NULL
 
           AND TRIM(d.payment_term_description_bp) <> '-'
-
     );
 
 
-    /*
-    ------------------------------------------------------------
-    3.2 ENRIQUECIMENTO
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 3.2 ENRIQUECIMENTO
+    -- ========================================================
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
@@ -456,18 +520,16 @@ BEGIN
             CASE
 
                 WHEN NULLIF(
-                        TRIM(g.payment_condition),
-                        ''
-                     ) IS NULL
+                    TRIM(g.payment_condition), ''
+                ) IS NULL
                     THEN NULL
 
                 WHEN TRIM(g.payment_condition) = '-'
                     THEN NULL
 
                 WHEN NULLIF(
-                        TRIM(d.payment_term_description_bp),
-                        ''
-                     ) IS NULL
+                    TRIM(d.payment_term_description_bp), ''
+                ) IS NULL
                     THEN NULL
 
                 WHEN TRIM(d.payment_term_description_bp) = '-'
@@ -479,25 +541,21 @@ BEGIN
 
     WHERE NOT (
 
-        g.payment_condition_description_dim
-
-        <=>
+        g.payment_condition_description_dim <=>
 
         CASE
 
             WHEN NULLIF(
-                    TRIM(g.payment_condition),
-                    ''
-                 ) IS NULL
+                TRIM(g.payment_condition), ''
+            ) IS NULL
                 THEN NULL
 
             WHEN TRIM(g.payment_condition) = '-'
                 THEN NULL
 
             WHEN NULLIF(
-                    TRIM(d.payment_term_description_bp),
-                    ''
-                 ) IS NULL
+                TRIM(d.payment_term_description_bp), ''
+            ) IS NULL
                 THEN NULL
 
             WHEN TRIM(d.payment_term_description_bp) = '-'
@@ -508,7 +566,6 @@ BEGIN
         END
 
     );
-
 
     SET v_payment_updated = ROW_COUNT();
 
@@ -521,7 +578,7 @@ BEGIN
     Origem:
         bp_datalake.dim_plant
 
-    Chave:
+    Relacionamento:
         plant_code
 
     Destino:
@@ -531,41 +588,31 @@ BEGIN
     */
 
 
-    /*
-    ------------------------------------------------------------
-    4.1 MATCHES VÁLIDOS
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 4.1 MATCHES VÁLIDOS
+    -- ========================================================
 
     SELECT COUNT(*)
     INTO v_plant_match
-
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
-
     WHERE EXISTS (
-
         SELECT 1
-
         FROM bp_datalake.dim_plant AS d
 
         WHERE TRIM(g.plant_code) =
               TRIM(d.plant_code)
 
           AND NULLIF(
-                  TRIM(d.plant_description),
-                  ''
-              ) IS NOT NULL
+              TRIM(d.plant_description), ''
+          ) IS NOT NULL
 
           AND TRIM(d.plant_description) <> '-'
-
     );
 
 
-    /*
-    ------------------------------------------------------------
-    4.2 ENRIQUECIMENTO
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 4.2 ENRIQUECIMENTO
+    -- ========================================================
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
@@ -579,18 +626,16 @@ BEGIN
             CASE
 
                 WHEN NULLIF(
-                        TRIM(g.plant_code),
-                        ''
-                     ) IS NULL
+                    TRIM(g.plant_code), ''
+                ) IS NULL
                     THEN NULL
 
                 WHEN TRIM(g.plant_code) = '-'
                     THEN NULL
 
                 WHEN NULLIF(
-                        TRIM(d.plant_description),
-                        ''
-                     ) IS NULL
+                    TRIM(d.plant_description), ''
+                ) IS NULL
                     THEN NULL
 
                 WHEN TRIM(d.plant_description) = '-'
@@ -602,25 +647,21 @@ BEGIN
 
     WHERE NOT (
 
-        g.plant_description
-
-        <=>
+        g.plant_description <=>
 
         CASE
 
             WHEN NULLIF(
-                    TRIM(g.plant_code),
-                    ''
-                 ) IS NULL
+                TRIM(g.plant_code), ''
+            ) IS NULL
                 THEN NULL
 
             WHEN TRIM(g.plant_code) = '-'
                 THEN NULL
 
             WHEN NULLIF(
-                    TRIM(d.plant_description),
-                    ''
-                 ) IS NULL
+                TRIM(d.plant_description), ''
+            ) IS NULL
                 THEN NULL
 
             WHEN TRIM(d.plant_description) = '-'
@@ -632,7 +673,6 @@ BEGIN
 
     );
 
-
     SET v_plant_updated = ROW_COUNT();
 
 
@@ -641,9 +681,9 @@ BEGIN
     5. ORIGEM DO CHASSI
     ============================================================
 
-    Regra:
-        primeiro caractere letra  -> Importado
-        primeiro caractere número -> Nacional
+    Regras:
+        Primeiro caractere letra  = Importado
+        Primeiro caractere número = Nacional
 
     Destino:
         origem_chassi
@@ -652,11 +692,9 @@ BEGIN
     */
 
 
-    /*
-    ------------------------------------------------------------
-    5.1 ENRIQUECIMENTO
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 5.1 ENRIQUECIMENTO
+    -- ========================================================
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
@@ -678,9 +716,7 @@ BEGIN
 
     WHERE NOT (
 
-        g.origem_chassi
-
-        <=>
+        g.origem_chassi <=>
 
         CASE
 
@@ -698,15 +734,12 @@ BEGIN
 
     );
 
-
     SET v_origem_updated = ROW_COUNT();
 
 
-    /*
-    ------------------------------------------------------------
-    5.2 MÉTRICAS DE ORIGEM
-    ------------------------------------------------------------
-    */
+    -- ========================================================
+    -- 5.2 MÉTRICAS DE ORIGEM
+    -- ========================================================
 
     SELECT
         SUM(origem_chassi IS NOT NULL),
@@ -723,11 +756,9 @@ BEGIN
     FROM bp_datalake.gold_zsdbil17_faturamento;
 
 
-    /*
-    ============================================================
-    6. FINALIZA TRANSAÇÃO
-    ============================================================
-    */
+    -- ========================================================
+    -- 6. FINALIZA TRANSAÇÃO
+    -- ========================================================
 
     COMMIT;
 
@@ -741,7 +772,6 @@ BEGIN
     */
 
     SELECT
-
         'SUCCESS' AS execution_status,
 
         v_started_at AS started_at,
