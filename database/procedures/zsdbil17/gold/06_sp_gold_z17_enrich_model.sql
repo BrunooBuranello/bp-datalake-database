@@ -1,33 +1,38 @@
+
 -- ============================================================
 -- GOLD - MODEL ENRICHMENT
 -- ============================================================
 -- Objetivo:
--- Enriquecer a gold_zsdbil17_faturamento com o modelo
--- simplificado do veículo.
+-- Atualizar o modelo simplificado dos veículos na Gold.
 --
 -- Origem:
--- bp_datalake.material_master
+-- bp_datalake.bronze_vehicle_material_code
 --
--- Chave:
--- gold.material -> material_master.cod_sap
+-- Relacionamento:
+-- gold.material -> bronze_vehicle_material_code.cod_sap
 --
 -- Destino:
--- model_simplified
+-- gold.model_simplified
 --
 -- Estratégia:
--- Utiliza o mapeamento atual existente no material_master.
+-- Reconsulta todos os materiais da Gold.
+-- Atualiza somente quando o modelo encontrado for diferente
+-- do atual, incluindo valores NULL ou UNKNOWN.
 --
--- Execução:
--- Deve ocorrer após o append dos registros Legacy para que
--- toda a Gold receba o enriquecimento.
+-- Sem correspondência válida, utiliza UNKNOWN.
+-- Considera registros atuais e Legacy.
 -- ============================================================
-
-DROP PROCEDURE IF EXISTS bp_datalake.sp_gold_z17_enrich_model;
 
 DELIMITER $$
 
+DROP PROCEDURE IF EXISTS bp_datalake.sp_gold_z17_enrich_model$$
+
 CREATE PROCEDURE bp_datalake.sp_gold_z17_enrich_model()
 BEGIN
+
+    -- ========================================================
+    -- 1. VARIÁVEIS
+    -- ========================================================
 
     DECLARE v_started_at DATETIME(6);
     DECLARE v_finished_at DATETIME(6);
@@ -41,11 +46,9 @@ BEGIN
     DECLARE v_error_message TEXT DEFAULT NULL;
 
 
-    /*
-    ============================================================
-    1. TRATAMENTO DE ERRO
-    ============================================================
-    */
+    -- ========================================================
+    -- 2. TRATAMENTO DE ERROS
+    -- ========================================================
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -77,7 +80,7 @@ BEGIN
         )
         VALUES (
             'sp_gold_z17_enrich_model',
-            'material_master',
+            'bronze_vehicle_material_code',
             'gold_zsdbil17_faturamento',
             'ERROR',
             CURRENT_USER(),
@@ -106,11 +109,9 @@ BEGIN
     SET v_started_at = NOW(6);
 
 
-    /*
-    ============================================================
-    2. GARANTE COLUNA DE MODELO
-    ============================================================
-    */
+    -- ========================================================
+    -- 3. GARANTE A COLUNA MODEL_SIMPLIFIED
+    -- ========================================================
 
     IF NOT EXISTS (
         SELECT 1
@@ -130,22 +131,18 @@ BEGIN
     START TRANSACTION;
 
 
-    /*
-    ============================================================
-    3. TOTAL DE REGISTROS DA GOLD
-    ============================================================
-    */
+    -- ========================================================
+    -- 4. TOTAL DE REGISTROS DA GOLD
+    -- ========================================================
 
     SELECT COUNT(*)
     INTO v_source_rows
     FROM bp_datalake.gold_zsdbil17_faturamento;
 
 
-    /*
-    ============================================================
-    4. REGISTROS COM MATCH NO MATERIAL MASTER
-    ============================================================
-    */
+    -- ========================================================
+    -- 5. REGISTROS COM MODELO IDENTIFICADO
+    -- ========================================================
 
     SELECT COUNT(*)
     INTO v_model_match
@@ -153,12 +150,29 @@ BEGIN
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
     WHERE EXISTS (
+
         SELECT 1
-        FROM bp_datalake.material_master AS mm
-        WHERE NULLIF(TRIM(CAST(mm.cod_sap AS CHAR)), '') IS NOT NULL
-          AND TRIM(CAST(mm.cod_sap AS CHAR))
-              = TRIM(CAST(g.material AS CHAR))
-          AND NULLIF(TRIM(mm.model_simplified), '') IS NOT NULL
+        FROM bp_datalake.bronze_vehicle_material_code AS mm
+
+        WHERE NULLIF(
+            TRIM(CAST(mm.cod_sap AS CHAR)), ''
+        ) IS NOT NULL
+
+        AND
+            CONVERT(
+                TRIM(CAST(mm.cod_sap AS CHAR))
+                USING utf8mb4
+            ) COLLATE utf8mb4_unicode_ci
+            =
+            CONVERT(
+                TRIM(CAST(g.material AS CHAR))
+                USING utf8mb4
+            ) COLLATE utf8mb4_unicode_ci
+
+        AND NULLIF(
+            TRIM(mm.model_simplified), ''
+        ) IS NOT NULL
+
     );
 
 
@@ -166,17 +180,18 @@ BEGIN
         v_source_rows - v_model_match;
 
 
+    -- ========================================================
+    -- 6. ENRIQUECIMENTO DO MODELO
+    -- ========================================================
     /*
-    ============================================================
-    5. ENRIQUECIMENTO DO MODELO
-    ============================================================
+    Busca o modelo atualizado na Bronze.
 
-    Caso existam múltiplos registros para o mesmo cod_sap,
-    utiliza somente um registro de forma determinística.
+    Se houver mais de um cod_sap, seleciona apenas
+    um registro, priorizando modelo preenchido.
 
-    Sem material ou sem correspondência válida:
-        UNKNOWN
-    ============================================================
+    Atualiza a Gold somente quando o valor for diferente.
+
+    A comparação usa a mesma collation nos dois lados.
     */
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
@@ -194,21 +209,29 @@ BEGIN
                 mm.model_simplified,
 
                 ROW_NUMBER() OVER (
-                    PARTITION BY TRIM(CAST(mm.cod_sap AS CHAR))
+
+                    PARTITION BY
+                        TRIM(CAST(mm.cod_sap AS CHAR))
+
                     ORDER BY
                         CASE
-                            WHEN NULLIF(TRIM(mm.model_simplified), '') IS NOT NULL
+                            WHEN NULLIF(
+                                TRIM(mm.model_simplified), ''
+                            ) IS NOT NULL
                                 THEN 1
                             ELSE 2
                         END,
-                        COALESCE(TRIM(mm.model_simplified), '')
+
+                        COALESCE(
+                            TRIM(mm.model_simplified), ''
+                        )
+
                 ) AS rn
 
-            FROM bp_datalake.material_master AS mm
+            FROM bp_datalake.bronze_vehicle_material_code AS mm
 
             WHERE NULLIF(
-                TRIM(CAST(mm.cod_sap AS CHAR)),
-                ''
+                TRIM(CAST(mm.cod_sap AS CHAR)), ''
             ) IS NOT NULL
 
         ) AS ranked
@@ -217,58 +240,62 @@ BEGIN
 
     ) AS mm
 
-        ON TRIM(CAST(g.material AS CHAR))
-         = TRIM(CAST(mm.cod_sap AS CHAR))
+        ON
+            CONVERT(
+                TRIM(CAST(g.material AS CHAR))
+                USING utf8mb4
+            ) COLLATE utf8mb4_unicode_ci
+            =
+            CONVERT(
+                TRIM(CAST(mm.cod_sap AS CHAR))
+                USING utf8mb4
+            ) COLLATE utf8mb4_unicode_ci
+
 
     SET
         g.model_simplified =
-            CASE
-                WHEN NULLIF(TRIM(g.material), '') IS NULL
-                    THEN 'UNKNOWN'
-
-                WHEN mm.cod_sap IS NULL
-                    THEN 'UNKNOWN'
-
-                ELSE COALESCE(
-                    NULLIF(TRIM(mm.model_simplified), ''),
-                    'UNKNOWN'
-                )
-            END
-
-    WHERE NOT (
-        g.model_simplified <=>
-        CASE
-            WHEN NULLIF(TRIM(g.material), '') IS NULL
-                THEN 'UNKNOWN'
-
-            WHEN mm.cod_sap IS NULL
-                THEN 'UNKNOWN'
-
-            ELSE COALESCE(
+            COALESCE(
                 NULLIF(TRIM(mm.model_simplified), ''),
                 'UNKNOWN'
             )
-        END
+
+
+    -- ========================================================
+    -- 6.1 ATUALIZA SOMENTE VALORES DIFERENTES
+    -- ========================================================
+
+    WHERE NOT (
+
+        CONVERT(
+            g.model_simplified USING utf8mb4
+        ) COLLATE utf8mb4_unicode_ci
+
+        <=>
+
+        CONVERT(
+            COALESCE(
+                NULLIF(TRIM(mm.model_simplified), ''),
+                'UNKNOWN'
+            )
+            USING utf8mb4
+        ) COLLATE utf8mb4_unicode_ci
+
     );
 
 
     SET v_rows_updated = ROW_COUNT();
 
 
-    /*
-    ============================================================
-    6. FINALIZA EXECUÇÃO
-    ============================================================
-    */
+    -- ========================================================
+    -- 7. FINALIZAÇÃO
+    -- ========================================================
 
     SET v_finished_at = NOW(6);
 
 
-    /*
-    ============================================================
-    7. LOG DE SUCESSO
-    ============================================================
-    */
+    -- ========================================================
+    -- 8. LOG DE SUCESSO
+    -- ========================================================
 
     INSERT INTO bp_datalake.etl_execution_log (
         procedure_name,
@@ -289,7 +316,7 @@ BEGIN
     )
     VALUES (
         'sp_gold_z17_enrich_model',
-        'material_master',
+        'bronze_vehicle_material_code',
         'gold_zsdbil17_faturamento',
         'SUCCESS',
         CURRENT_USER(),
@@ -310,27 +337,25 @@ BEGIN
     );
 
 
-    /*
-    ============================================================
-    8. CONFIRMA TRANSAÇÃO
-    ============================================================
-    */
+    -- ========================================================
+    -- 9. CONFIRMA TRANSAÇÃO
+    -- ========================================================
 
     COMMIT;
 
 
-    /*
-    ============================================================
-    9. RETORNO
-    ============================================================
-    */
+    -- ========================================================
+    -- 10. RESULTADO DA EXECUÇÃO
+    -- ========================================================
 
     SELECT
         'SUCCESS' AS execution_status,
+
         v_source_rows AS source_rows,
         v_model_match AS model_match_rows,
         v_unmatched_rows AS unmatched_rows,
         v_rows_updated AS model_updated_rows,
+
         v_model_match + v_unmatched_rows AS accounted_rows,
 
         ROUND(
@@ -345,7 +370,7 @@ BEGIN
         v_started_at AS started_at,
         v_finished_at AS finished_at;
 
-
 END$$
 
 DELIMITER ;
+    
