@@ -319,7 +319,33 @@ BEGIN
 
     /*
     =========================================================
-    17. FINALIZA PIPELINE
+    17. DEMO HISTORY - ENRIQUECIMENTO DE MODELO
+    =========================================================
+
+    Origem:
+        bp_datalake.material_master
+
+    Chave:
+        material -> cod_sap
+
+    Destino:
+        model_simplified
+
+    A sincronização DEMO nasce da Silver, que não possui
+    model_simplified. Por isso o enriquecimento específico
+    precisa executar depois que os eventos foram sincronizados.
+
+    A procedure é idempotente, registra execução própria e
+    preenche UNKNOWN quando não existe correspondência.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_gold_z17_demo_enrich_model();
+
+
+    /*
+    =========================================================
+    18. FINALIZA PIPELINE
     =========================================================
     */
 
@@ -345,7 +371,7 @@ BEGIN
 
     /*
     =========================================================
-    18. RETORNO FINAL
+    19. RETORNO FINAL
     =========================================================
     */
 

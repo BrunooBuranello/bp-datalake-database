@@ -27,7 +27,7 @@ Status do ciclo:
     OPEN
     WARNING     -> a partir de 20 dias
     OVERDUE     -> após 30 dias
-    CLOSED      -> existe faturamento posterior não cancelado
+    CLOSED      -> existe faturamento posterior com chave VALID
                    OU existe um novo DEMO posterior do mesmo chassi
 Identidade de negócio:
     demo_cycle_key
@@ -555,10 +555,10 @@ BEGIN
     Uma movimentação posterior CANCELLED:
         - permanece no histórico;
         - não fecha o ciclo sozinha.
-    A primeira movimentação posterior não cancelada:
+    A primeira movimentação posterior com chave VALID:
         - encerra o ciclo DEMO.
     A própria NF DEMO CANCELLED também encerra o ciclo.
-    Se não houver movimentação válida antes do próximo DEMO,
+    Se não houver movimentação com chave VALID antes do próximo DEMO,
     o próximo DEMO encerra o ciclo anterior e inicia outro ciclo.
     ============================================================
     */
@@ -627,7 +627,11 @@ BEGIN
             ) AS origin_cancelled,
             /*
             Localiza a primeira movimentação posterior
-            válida e não cancelada.
+            confirmada pela Silver com chave VALID.
+
+            Status vazio, desconhecido ou ainda não validado não
+            fecha o ciclo. Isso evita encerramento prematuro por
+            informação incompleta da origem.
             */
             MIN(
                 CASE
@@ -637,7 +641,7 @@ BEGIN
                                 TRIM(e.access_key_status),
                                 ''
                             )
-                         ) <> 'CANCELLED'
+                         ) = 'VALID'
                     THEN e.issuance_date
                 END
             ) OVER (

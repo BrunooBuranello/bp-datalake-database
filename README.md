@@ -61,6 +61,33 @@ Responsabilidades:
 
 # Procedures
 
+## Histórico DEMO
+
+Arquivos:
+
+```text
+database/demo_history/01_create_gold_zsdbil17_demo_history.sql
+database/demo_history/02_sp_sync_gold_zsdbil17_demo_history.sql
+database/demo_history/03_sp_gold_z17_demo_enrich_dealer.sql
+database/demo_history/04_sp_gold_z17_demo_enrich_model.sql
+database/demo_history/05_validate_demo_history_pipeline.sql
+```
+
+Ordem dentro da pipeline:
+
+```text
+sincronizar eventos e status
+    -> enriquecer dealer
+    -> enriquecer modelo
+```
+
+Somente uma movimentação posterior com
+`access_key_status = 'VALID'` encerra o ciclo DEMO. Status vazio, desconhecido ou
+ainda não validado mantém o ciclo aberto para impedir fechamento prematuro.
+
+O enriquecimento de modelo precisa ocorrer depois da sincronização porque o
+histórico nasce da Silver, onde `model_simplified` não existe.
+
 ## Silver
 
 Arquivo:
