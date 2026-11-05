@@ -244,7 +244,7 @@ BEGIN
     =========================================================
 
     Origem:
-        bp_datalake.material_master
+        bp_datalake.bronze_vehicle_material_code
 
     Chave:
         material -> cod_sap
@@ -323,7 +323,7 @@ BEGIN
     =========================================================
 
     Origem:
-        bp_datalake.material_master
+        bp_datalake.bronze_vehicle_material_code
 
     Chave:
         material -> cod_sap
@@ -345,7 +345,34 @@ BEGIN
 
     /*
     =========================================================
-    18. FINALIZA PIPELINE
+    18. DEMO HISTORY - CAMPANHAS
+    =========================================================
+
+    Origem:
+        bp_datalake.dim_demo_campaign
+
+    Destinos:
+        warning_date, due_date, demo_status
+        campaign_code, campaign_name,
+        campaign_warning_days, campaign_due_days,
+        campaign_applied_at
+
+    Regra:
+        - a sync acima calcula o prazo padrão (20/30 dias);
+        - esta etapa sobrescreve só os ciclos elegíveis a uma
+          campanha ativa (modelo + janela de emissão);
+        - depende do model_simplified, por isso roda depois
+          do enriquecimento de modelo;
+        - CLOSED nunca muda de status.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_gold_z17_demo_apply_campaign();
+
+
+    /*
+    =========================================================
+    19. FINALIZA PIPELINE
     =========================================================
     */
 

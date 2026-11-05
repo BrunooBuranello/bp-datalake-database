@@ -25,8 +25,11 @@ Eventos:
         CANCELLATION
 Status do ciclo:
     OPEN
-    WARNING     -> a partir de 20 dias
-    OVERDUE     -> após 30 dias
+    WARNING     -> a partir de 20 dias (prazo padrão)
+    OVERDUE     -> após 30 dias (prazo padrão)
+    Ciclos elegíveis a uma campanha (dim_demo_campaign) têm
+    prazo e status sobrescritos depois, na pipeline, por
+    sp_gold_z17_demo_apply_campaign (07).
     CLOSED      -> existe faturamento posterior com chave VALID
                    OU existe um novo DEMO posterior do mesmo chassi
 Identidade de negócio:

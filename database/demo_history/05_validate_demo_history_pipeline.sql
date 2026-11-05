@@ -99,3 +99,80 @@ GROUP BY
     ),
     event_type
 ORDER BY access_key_status, event_type;
+
+-- ============================================================
+-- CAMPANHAS (06 / 07)
+-- ============================================================
+
+-- A pipeline deve aplicar as campanhas depois do enriquecimento
+-- de modelo, porque a elegibilidade depende do model_simplified.
+SELECT
+    'pipeline_calls_demo_campaign' AS validation_name,
+    CASE
+        WHEN ROUTINE_DEFINITION LIKE '%sp_gold_z17_demo_enrich_model%sp_gold_z17_demo_apply_campaign%'
+            THEN 'PASS'
+        ELSE 'FAIL'
+    END AS validation_status
+FROM information_schema.ROUTINES
+WHERE ROUTINE_SCHEMA = 'bp_datalake'
+  AND ROUTINE_NAME = 'sp_process_zsdbil17_pipeline';
+
+-- Ciclo com campanha precisa ter as datas calculadas pelos dias
+-- gravados da campanha (emissao = dia 0).
+SELECT
+    'campaign_dates_are_consistent' AS validation_name,
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS validation_status,
+    COUNT(*) AS inconsistent_rows
+FROM bp_datalake.gold_zsdbil17_demo_history
+WHERE event_sequence = 1
+  AND campaign_code IS NOT NULL
+  AND (
+      warning_date <> DATE_ADD(issuance_date, INTERVAL campaign_warning_days DAY)
+      OR due_date <> DATE_ADD(issuance_date, INTERVAL campaign_due_days DAY)
+  );
+
+-- Ciclo aberto com campanha precisa ter o status coerente com
+-- o prazo da campanha.
+SELECT
+    'campaign_status_is_consistent' AS validation_name,
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS validation_status,
+    COUNT(*) AS inconsistent_rows
+FROM bp_datalake.gold_zsdbil17_demo_history
+WHERE event_sequence = 1
+  AND campaign_code IS NOT NULL
+  AND demo_status <> 'CLOSED'
+  AND demo_status <>
+      CASE
+          WHEN CURRENT_DATE > due_date THEN 'OVERDUE'
+          WHEN CURRENT_DATE >= warning_date THEN 'WARNING'
+          ELSE 'OPEN'
+      END;
+
+-- Alerta: DEMO emitido dentro da janela de uma campanha ativa
+-- mas com modelo UNKNOWN/vazio nao recebe campanha. Deve ser
+-- corrigido no cadastro Material Code.
+SELECT
+    'campaign_window_without_model' AS validation_name,
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'WARN' END AS validation_status,
+    COUNT(*) AS cycles_without_model
+FROM bp_datalake.gold_zsdbil17_demo_history AS g
+WHERE g.event_sequence = 1
+  AND g.event_type = 'DEMO'
+  AND COALESCE(NULLIF(TRIM(g.model_simplified), ''), 'UNKNOWN') = 'UNKNOWN'
+  AND EXISTS (
+      SELECT 1
+      FROM bp_datalake.dim_demo_campaign AS c
+      WHERE c.active = 1
+        AND g.issuance_date >= c.issuance_from
+        AND (c.issuance_to IS NULL OR g.issuance_date <= c.issuance_to)
+  );
+
+-- Distribuicao informativa dos ciclos por campanha e status.
+SELECT
+    COALESCE(campaign_code, '<PADRAO>') AS campaign_code,
+    demo_status,
+    COUNT(*) AS cycles
+FROM bp_datalake.gold_zsdbil17_demo_history
+WHERE event_sequence = 1
+GROUP BY COALESCE(campaign_code, '<PADRAO>'), demo_status
+ORDER BY campaign_code, demo_status;

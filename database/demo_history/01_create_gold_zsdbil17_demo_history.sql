@@ -114,18 +114,43 @@ CREATE TABLE IF NOT EXISTS bp_datalake.gold_zsdbil17_demo_history (
     demo_started_at DATETIME NOT NULL,
 
     -- Primeiro aviso.
-    -- Regra atual: faturamento DEMO + 20 dias.
+    -- Regra padrão: faturamento DEMO + 20 dias.
+    -- Campanha ativa: faturamento DEMO + campaign_warning_days.
     warning_date DATE NOT NULL,
 
     -- Momento em que a notificação de WARNING foi enviada.
     warning_sent_at DATETIME NULL,
 
     -- Data de vencimento.
-    -- Regra atual: faturamento DEMO + 30 dias.
+    -- Regra padrão: faturamento DEMO + 30 dias.
+    -- Campanha ativa: faturamento DEMO + campaign_due_days.
     due_date DATE NOT NULL,
 
     -- Momento em que a notificação de OVERDUE foi enviada.
     overdue_sent_at DATETIME NULL,
+
+
+    -- ========================================================
+    -- CAMPANHA COMERCIAL
+    -- ========================================================
+    -- Origem:
+    -- bp_datalake.dim_demo_campaign
+    --
+    -- Atualizado por:
+    -- sp_gold_z17_demo_apply_campaign (cria as colunas em
+    -- tabelas já existentes). NULL = prazo padrão.
+    -- ========================================================
+
+    campaign_code VARCHAR(50) NULL,
+
+    campaign_name VARCHAR(150) NULL,
+
+    campaign_warning_days SMALLINT NULL,
+
+    campaign_due_days SMALLINT NULL,
+
+    -- Quando a campanha atual foi aplicada ao ciclo.
+    campaign_applied_at DATETIME NULL,
 
     -- Momento em que o ciclo foi encerrado.
     -- NULL enquanto permanecer aberto.
@@ -317,6 +342,15 @@ CREATE TABLE IF NOT EXISTS bp_datalake.gold_zsdbil17_demo_history (
 
     KEY idx_demo_issuance_date (
         issuance_date
+    ),
+
+
+    -- --------------------------------------------------------
+    -- CICLOS POR CAMPANHA
+    -- --------------------------------------------------------
+
+    KEY idx_demo_campaign_code (
+        campaign_code
     )
 
 )

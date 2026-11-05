@@ -71,15 +71,30 @@ database/demo_history/02_sp_sync_gold_zsdbil17_demo_history.sql
 database/demo_history/03_sp_gold_z17_demo_enrich_dealer.sql
 database/demo_history/04_sp_gold_z17_demo_enrich_model.sql
 database/demo_history/05_validate_demo_history_pipeline.sql
+database/demo_history/06_create_dim_demo_campaign.sql
+database/demo_history/07_sp_gold_z17_demo_apply_campaign.sql
 ```
 
 Ordem dentro da pipeline:
 
 ```text
-sincronizar eventos e status
+sincronizar eventos e status (prazo padrão 20/30 dias)
     -> enriquecer dealer
-    -> enriquecer modelo
+    -> enriquecer modelo (bronze_vehicle_material_code)
+    -> aplicar campanhas (dim_demo_campaign)
 ```
+
+Campanhas comerciais (`dim_demo_campaign`) alteram o prazo do ciclo DEMO para
+um modelo (prefixo do `model_simplified`, ano-modelo opcional) e uma janela de
+**data de emissão** da NF DEMO. A sync continua calculando o padrão; a
+`sp_gold_z17_demo_apply_campaign` sobrescreve `warning_date`, `due_date` e
+`demo_status` dos ciclos elegíveis e grava as colunas `campaign_*`. `CLOSED`
+nunca muda. O fim natural da campanha é o `issuance_to`: DEMOs emitidos dentro
+da janela mantêm o prazo até o fim do ciclo. `active = 0` cancela a campanha e
+devolve **todos** os ciclos dela ao padrão na execução seguinte.
+
+Ordem de implantação: `06` (tabela e seed), `04` e `07` (procedures), pipeline e
+depois `05` (validação).
 
 Somente uma movimentação posterior com
 `access_key_status = 'VALID'` encerra o ciclo DEMO. Status vazio, desconhecido ou
