@@ -6,16 +6,25 @@
 -- simplificado do veículo.
 --
 -- Origem:
--- bp_datalake.material_master
+-- bp_datalake.bronze_vehicle_material_code
+-- (cadastro mantido pelo portal Material Code; a antiga
+-- material_master está desatualizada e não é mais usada)
 --
 -- Chave:
--- gold.material -> material_master.cod_sap
+-- gold.material -> bronze_vehicle_material_code.cod_sap
 --
 -- Destino:
 -- model_simplified
 --
 -- Estratégia:
--- Utiliza o mapeamento atual existente no material_master.
+-- Mesma regra da sp_gold_z17_enrich_model do faturamento:
+-- um registro por cod_sap (prioriza modelo preenchido) e
+-- comparação com a mesma collation nos dois lados.
+-- Sem correspondência válida, utiliza UNKNOWN.
+--
+-- Cuidado:
+-- A campanha DEMO (sp_gold_z17_demo_apply_campaign) depende
+-- deste model_simplified; um modelo UNKNOWN fica sem campanha.
 -- ============================================================
 
 DROP PROCEDURE IF EXISTS bp_datalake.sp_gold_z17_demo_enrich_model;
@@ -73,7 +82,7 @@ BEGIN
         )
         VALUES (
             'sp_gold_z17_demo_enrich_model',
-            'material_master',
+            'bronze_vehicle_material_code',
             'gold_zsdbil17_demo_history',
             'ERROR',
             CURRENT_USER(),
@@ -135,7 +144,7 @@ BEGIN
 
     /*
     ============================================================
-    3. REGISTROS COM MATCH NO MATERIAL MASTER
+    3. REGISTROS COM MATCH NA MATERIAL CODE
     ============================================================
     */
 
@@ -146,10 +155,14 @@ BEGIN
 
     WHERE EXISTS (
         SELECT 1
-        FROM bp_datalake.material_master AS mm
+        FROM bp_datalake.bronze_vehicle_material_code AS mm
         WHERE NULLIF(TRIM(CAST(mm.cod_sap AS CHAR)), '') IS NOT NULL
-          AND TRIM(CAST(mm.cod_sap AS CHAR))
-              = TRIM(CAST(g.material AS CHAR))
+          -- Collation explícita: a Bronze e a Gold podem ter
+          -- collations diferentes (erro 1267 sem o CONVERT).
+          AND CONVERT(TRIM(CAST(mm.cod_sap AS CHAR)) USING utf8mb4)
+                  COLLATE utf8mb4_unicode_ci
+              = CONVERT(TRIM(CAST(g.material AS CHAR)) USING utf8mb4)
+                  COLLATE utf8mb4_unicode_ci
           AND NULLIF(TRIM(mm.model_simplified), '') IS NOT NULL
     );
 
@@ -189,7 +202,7 @@ BEGIN
                         COALESCE(TRIM(mm.model_simplified), '')
                 ) AS rn
 
-            FROM bp_datalake.material_master AS mm
+            FROM bp_datalake.bronze_vehicle_material_code AS mm
 
             WHERE NULLIF(
                 TRIM(CAST(mm.cod_sap AS CHAR)),
@@ -202,8 +215,10 @@ BEGIN
 
     ) AS mm
 
-        ON TRIM(CAST(g.material AS CHAR))
-         = TRIM(CAST(mm.cod_sap AS CHAR))
+        ON CONVERT(TRIM(CAST(g.material AS CHAR)) USING utf8mb4)
+               COLLATE utf8mb4_unicode_ci
+         = CONVERT(TRIM(CAST(mm.cod_sap AS CHAR)) USING utf8mb4)
+               COLLATE utf8mb4_unicode_ci
 
     SET
         g.model_simplified =
@@ -221,8 +236,8 @@ BEGIN
             END
 
     WHERE NOT (
-        g.model_simplified <=>
-        CASE
+        CONVERT(g.model_simplified USING utf8mb4) COLLATE utf8mb4_unicode_ci <=>
+        CONVERT(CASE
             WHEN NULLIF(TRIM(g.material), '') IS NULL
                 THEN 'UNKNOWN'
 
@@ -233,7 +248,7 @@ BEGIN
                 NULLIF(TRIM(mm.model_simplified), ''),
                 'UNKNOWN'
             )
-        END
+        END USING utf8mb4) COLLATE utf8mb4_unicode_ci
     );
 
 
@@ -274,7 +289,7 @@ BEGIN
     )
     VALUES (
         'sp_gold_z17_demo_enrich_model',
-        'material_master',
+        'bronze_vehicle_material_code',
         'gold_zsdbil17_demo_history',
         'SUCCESS',
         CURRENT_USER(),
