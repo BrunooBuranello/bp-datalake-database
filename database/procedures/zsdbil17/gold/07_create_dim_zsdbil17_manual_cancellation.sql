@@ -10,21 +10,27 @@
 --
 -- Quem grava:
 -- App Django "cancellations" (BYD Sales Operation). Usuário
--- cola chassi + data do faturamento original; o app busca na
--- Silver o número da NF daquele chassi naquela data e grava
--- aqui. Ninguém digita a NF, para evitar erro de zero à
--- esquerda e de digitação.
+-- cola chassi + NF + data do faturamento original. O app
+-- completa a NF com zeros à esquerda (9 dígitos, formato da
+-- Silver), confere na Silver que existe exatamente uma NF de
+-- veículo com chassi + NF + data e grava aqui a planta dessa NF
+-- (plant_code), que o usuário não precisa saber.
 --
 -- Quem usa:
 -- bp_datalake.sp_z17_apply_manual_cancellation (08), no fim
 -- da pipeline Z17:
 --   Silver -> manual_cancellation = 'YES'
---   Gold   -> DELETE da linha chassi + NF
+--   Gold   -> DELETE da linha chassi + NF + data + planta
 --
 -- Regras:
--- 1. Chave = chassi + NF. Uma NF nova do mesmo chassi (outro
---    número, mesmo que no mesmo dia) nunca casa e volta para a
---    Gold normalmente.
+-- 1. Chave = chassi + NF + data de emissão + planta (ADR-004 do
+--    app cancellations). Só chassi + NF não basta: cada CNPJ da
+--    BYD tem a própria numeração de NF, e o mesmo chassi pode
+--    receber NFs de mesmo número de CNPJs diferentes (8.081
+--    combinações chassi + NF ambíguas na Silver em 06/11/2026;
+--    com data + planta sobram 3, do histórico antigo, que o app
+--    recusa). Uma NF nova do mesmo chassi nunca casa e volta para
+--    a Gold normalmente.
 -- 2. Nunca apagar linha: para desfazer, o app grava active = 0
 --    (com deactivated_by / deactivated_at) e a próxima carga
 --    devolve a NF para a Gold. Registrar de novo a mesma NF
@@ -50,8 +56,14 @@ CREATE TABLE IF NOT EXISTS bp_datalake.dim_zsdbil17_manual_cancellation (
     -- Data de emissão da NF cancelada, informada pelo usuário.
     original_issuance_date DATE NOT NULL,
 
-    -- NF encontrada na Silver para chassi + data (gravada pelo app).
+    -- NF informada pelo usuário, gravada com 9 dígitos (zeros à
+    -- esquerda), no mesmo formato da Silver e da Gold.
     invoice_number VARCHAR(50) NOT NULL,
+
+    -- Planta da NF, buscada na Silver no registro (o usuário não
+    -- informa). Faz parte da chave: separa NFs de mesmo número
+    -- emitidas por estabelecimentos diferentes.
+    plant_code VARCHAR(10) NOT NULL,
 
     -- first_seen_at da Silver no momento do registro. Só para
     -- auditoria: histórico anterior à reconciliação não tem valor.
@@ -74,9 +86,11 @@ CREATE TABLE IF NOT EXISTS bp_datalake.dim_zsdbil17_manual_cancellation (
 
     PRIMARY KEY (id),
 
-    UNIQUE KEY uk_manual_cancellation_chassis_invoice (
+    UNIQUE KEY uk_manual_cancellation_invoice_key (
         chassis_serial_number,
-        invoice_number
+        invoice_number,
+        original_issuance_date,
+        plant_code
     ),
 
     KEY idx_manual_cancellation_active (active),
@@ -88,6 +102,9 @@ CREATE TABLE IF NOT EXISTS bp_datalake.dim_zsdbil17_manual_cancellation (
 
     CONSTRAINT chk_manual_cancellation_invoice
         CHECK (TRIM(invoice_number) <> ''),
+
+    CONSTRAINT chk_manual_cancellation_plant
+        CHECK (TRIM(plant_code) <> ''),
 
     CONSTRAINT chk_manual_cancellation_inserted_by
         CHECK (TRIM(inserted_by) <> ''),
@@ -117,7 +134,7 @@ COMMENT = 'NFs de faturamento canceladas manualmente (paliativo); retiradas da G
 --   DEACTIVATE -> active 1 -> 0 (field_name = 'active')
 --   REACTIVATE -> active 0 -> 1 (field_name = 'active'), quando
 --                 a mesma NF é registrada de novo depois de
---                 desativada (a UNIQUE chassi + NF impede uma
+--                 desativada (a UNIQUE da chave impede uma
 --                 segunda linha; o histórico fica na auditoria)
 --
 -- request_id agrupa as linhas de um mesmo lote/clique.
@@ -133,6 +150,8 @@ CREATE TABLE IF NOT EXISTS bp_datalake.dim_zsdbil17_manual_cancellation_audit_hi
     -- Copiados para a auditoria continuar legível sozinha.
     chassis_serial_number VARCHAR(17) NOT NULL,
     invoice_number VARCHAR(50) NOT NULL,
+    original_issuance_date DATE NULL,
+    plant_code VARCHAR(10) NULL,
 
     action_type VARCHAR(20) NOT NULL,
 

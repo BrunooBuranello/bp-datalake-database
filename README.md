@@ -103,6 +103,33 @@ ainda não validado mantém o ciclo aberto para impedir fechamento prematuro.
 O enriquecimento de modelo precisa ocorrer depois da sincronização porque o
 histórico nasce da Silver, onde `model_simplified` não existe.
 
+## Chave de uma NF de veículo (regra do projeto)
+
+Para buscar, comparar ou excluir **uma NF específica de um chassi** na Silver
+ou na Gold da Z17, use sempre os quatro campos:
+
+```text
+chassis_serial_number + invoice_number + issuance_date + plant_code
+```
+
+Nunca só chassi + NF. Cada CNPJ da BYD tem a própria numeração de NF, e o
+mesmo chassi pode receber NFs de **mesmo número** de CNPJs diferentes
+(transferência por uma filial, venda pela fábrica). Teste na Silver
+(`cfop_car = 'YES'`, 06/11/2026):
+
+| Chave | Combinações que apontam para mais de uma NF |
+|---|---|
+| chassi + NF | 8.081 |
+| chassi + NF + data | 67 |
+| chassi + NF + data + planta | 3 (histórico antigo: duas filiais, mesma planta, NF, data e série) |
+
+Esses 3 casos só se separam pelo `byd_cnpj_number`. Quem usa a chave de
+quatro campos deve tratar o caso "mais de uma NF" como ambíguo (recusar ou
+pedir tratamento manual), nunca escolher uma das linhas.
+
+`invoice_number` está sempre com 9 dígitos e zeros à esquerda na Silver: um
+valor digitado pelo usuário precisa ser completado antes da comparação.
+
 ## Cancelamento manual de faturamento (paliativo)
 
 Arquivos:
@@ -110,26 +137,29 @@ Arquivos:
 ```text
 database/procedures/zsdbil17/gold/07_create_dim_zsdbil17_manual_cancellation.sql
 database/procedures/zsdbil17/gold/08_sp_z17_apply_manual_cancellation.sql
+database/procedures/zsdbil17/gold/09_alter_dim_zsdbil17_manual_cancellation_key.sql
 ```
 
 Enquanto os cancelamentos não forem estruturados, o time de BP registra no app
 **Cancelamentos** do BYD Sales Operation as NFs que a ZSDBIL17 ainda não marca
-como `CANCELLED`. O usuário informa chassi + data do faturamento original; o
-app busca a NF na Silver e grava em `dim_zsdbil17_manual_cancellation`, com
-auditoria em `dim_zsdbil17_manual_cancellation_audit_history`.
+como `CANCELLED`. O usuário informa chassi + NF + data do faturamento original;
+o app confere que existe exatamente uma NF com essa combinação na Silver,
+busca a planta e grava em `dim_zsdbil17_manual_cancellation`, com auditoria em
+`dim_zsdbil17_manual_cancellation_audit_history`.
 
 A `sp_z17_apply_manual_cancellation` roda depois de `sp_gold_z17_enrich_model`
 e antes do DEMO History:
 
 ```text
 garante colunas na Silver (só na 1ª vez, fora da transação)
-    -> Silver: manual_cancellation = 'YES' / manual_cancelled_at (chassi + NF ativos)
+    -> Silver: manual_cancellation = 'YES' / manual_cancelled_at (chave ativa)
     -> Gold:   DELETE das NFs canceladas
 ```
 
 Regras:
 
-- chave = chassi + NF; NF nova do mesmo chassi entra na Gold normalmente;
+- chave = chassi + NF + data + planta (seção acima); NF nova do mesmo chassi
+  entra na Gold normalmente;
 - sem fallback: a NF anterior do chassi não volta para a Gold;
 - `active = 0` (desativar no app) devolve a NF na execução seguinte;
 - em erro: ROLLBACK, `ERROR` no `etl_execution_log`, e a pipeline **continua**;
@@ -138,7 +168,9 @@ Regras:
   Uma venda posterior cancelada manualmente ainda fecha o ciclo DEMO.
 
 Ordem de implantação: `07` (tabelas), `08` (procedure), `CALL` isolado para
-criar as colunas da Silver e conferir, e só então a pipeline.
+criar as colunas da Silver e conferir, e só então a pipeline. O `09` só vale
+para a tabela criada pela primeira versão do `07` (chave chassi + NF): rodar
+uma vez, com a tabela vazia, e recriar o `08` em seguida.
 
 ## Silver
 

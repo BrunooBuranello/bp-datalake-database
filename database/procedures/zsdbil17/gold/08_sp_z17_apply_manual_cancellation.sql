@@ -24,7 +24,12 @@
 --    CANCELLED.
 --
 -- Regras:
--- 1. Chave = chassi + NF, só registros active = 1.
+-- 1. Chave = chassi + NF + data de emissão + planta, só
+--    registros active = 1 (ADR-004 do app cancellations). Só
+--    chassi + NF não basta: cada CNPJ da BYD numera as próprias
+--    NFs, e o mesmo chassi pode ter NFs de mesmo número de CNPJs
+--    diferentes; sem data e planta, a procedure tiraria também a
+--    NF válida.
 -- 2. Silver: manual_cancellation = 'YES' e manual_cancelled_at
 --    = loaded_at nas linhas da chave; 'NO' e NULL nas demais.
 --    Recalculado a cada execução porque a Silver é incremental
@@ -182,6 +187,9 @@ BEGIN
             COLLATE utf8mb4_0900_ai_ci AS chassis_serial_number,
         CONVERT(TRIM(c.invoice_number) USING utf8mb4)
             COLLATE utf8mb4_0900_ai_ci AS invoice_number,
+        c.original_issuance_date,
+        CONVERT(TRIM(c.plant_code) USING utf8mb4)
+            COLLATE utf8mb4_0900_ai_ci AS plant_code,
         c.loaded_at
     FROM bp_datalake.dim_zsdbil17_manual_cancellation AS c
     WHERE c.active = 1;
@@ -202,8 +210,10 @@ BEGIN
     (YES quando a chave está na lista, NO caso contrário) e
     só grava onde o valor atual é diferente. <=> compara NULL
     com segurança.
-    A UNIQUE (chassi, NF) da tabela manual garante no máximo
-    uma correspondência por linha da Silver.
+    A UNIQUE (chassi, NF, data, planta) da tabela manual garante
+    no máximo uma correspondência por linha da Silver.
+    plant_code é TEXT na Silver: o TRIM + CONVERT alinha com o
+    VARCHAR da tabela manual.
     */
 
     UPDATE bp_datalake.silver_zsdbil17_outbound_movements AS s
@@ -213,6 +223,10 @@ BEGIN
                    COLLATE utf8mb4_0900_ai_ci
        AND c.invoice_number =
                CONVERT(TRIM(s.invoice_number) USING utf8mb4)
+                   COLLATE utf8mb4_0900_ai_ci
+       AND c.original_issuance_date = s.issuance_date
+       AND c.plant_code =
+               CONVERT(TRIM(s.plant_code) USING utf8mb4)
                    COLLATE utf8mb4_0900_ai_ci
     SET
         s.manual_cancellation =
@@ -240,6 +254,7 @@ BEGIN
     ============================================================
     A Gold já grava chassi e NF com TRIM (load_base e legacy);
     o CONVERT/COLLATE só alinha a collation com a temporária.
+    Mesma chave de quatro campos da Silver.
     */
 
     DELETE g
@@ -250,6 +265,10 @@ BEGIN
                    COLLATE utf8mb4_0900_ai_ci
        AND c.invoice_number =
                CONVERT(g.invoice_number USING utf8mb4)
+                   COLLATE utf8mb4_0900_ai_ci
+       AND c.original_issuance_date = g.issuance_date
+       AND c.plant_code =
+               CONVERT(TRIM(g.plant_code) USING utf8mb4)
                    COLLATE utf8mb4_0900_ai_ci;
 
     SET v_gold_rows_deleted = ROW_COUNT();
