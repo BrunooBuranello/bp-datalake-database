@@ -37,6 +37,15 @@
 --    campaign_* limpas (as datas já voltaram ao padrão na sync).
 -- 6. warning_sent_at e overdue_sent_at pertencem ao app e
 --    não são alterados.
+-- 7. Campanha por lista (match_type = 'CHASSIS_LIST', script
+--    08): vale para os chassis de dim_demo_campaign_chassis,
+--    só em ciclos não CLOSED, sem olhar modelo.
+-- 8. Vencimento: fixed_due_date quando preenchido; senão
+--    emissão + due_days. O aviso nunca fica depois do
+--    vencimento (LEAST).
+-- 9. Vigência (valid_from/valid_to, pela data de hoje): fora
+--    dela a campanha não se aplica e o ciclo volta ao padrão
+--    na mesma execução (regra 5).
 -- ============================================================
 
 DROP PROCEDURE IF EXISTS bp_datalake.sp_gold_z17_demo_apply_campaign;
@@ -158,10 +167,13 @@ BEGIN
     comparações de texto entre tabelas diferentes.
     */
 
+    -- Ativas e dentro da vigência hoje (regra 9).
     SELECT COUNT(*)
     INTO v_active_campaigns
     FROM bp_datalake.dim_demo_campaign
-    WHERE active = 1;
+    WHERE active = 1
+      AND (valid_from IS NULL OR CURRENT_DATE >= valid_from)
+      AND (valid_to IS NULL OR CURRENT_DATE <= valid_to);
 
     DROP TEMPORARY TABLE IF EXISTS tmp_demo_campaign_match;
 
@@ -178,10 +190,12 @@ BEGIN
         ranked.campaign_name,
         ranked.warning_days,
         ranked.due_days,
-        DATE_ADD(ranked.demo_issuance_date, INTERVAL ranked.warning_days DAY)
-            AS warning_date,
-        DATE_ADD(ranked.demo_issuance_date, INTERVAL ranked.due_days DAY)
-            AS due_date
+        -- Regra 8: o aviso nunca depois do vencimento.
+        LEAST(
+            DATE_ADD(ranked.demo_issuance_date, INTERVAL ranked.warning_days DAY),
+            ranked.due_date
+        ) AS warning_date,
+        ranked.due_date
     FROM (
 
         SELECT
@@ -192,6 +206,11 @@ BEGIN
             c.campaign_name,
             c.warning_days,
             c.due_days,
+            -- Regra 8: vencimento fixo vence o due_days.
+            COALESCE(
+                c.fixed_due_date,
+                DATE_ADD(DATE(g.issuance_date), INTERVAL c.due_days DAY)
+            ) AS due_date,
 
             ROW_NUMBER() OVER (
                 PARTITION BY
@@ -206,15 +225,35 @@ BEGIN
 
         INNER JOIN bp_datalake.dim_demo_campaign AS c
             ON c.active = 1
+           -- Regra 9: vigência pela data de hoje.
+           AND (c.valid_from IS NULL OR CURRENT_DATE >= c.valid_from)
+           AND (c.valid_to IS NULL OR CURRENT_DATE <= c.valid_to)
            AND DATE(g.issuance_date) >= c.issuance_from
            AND (c.issuance_to IS NULL OR DATE(g.issuance_date) <= c.issuance_to)
-           AND CONVERT(UPPER(TRIM(g.model_simplified)) USING utf8mb4)
-                   COLLATE utf8mb4_unicode_ci
-               LIKE CONCAT(
-                   CONVERT(UPPER(TRIM(c.model_simplified_prefix)) USING utf8mb4)
-                       COLLATE utf8mb4_unicode_ci,
-                   '%'
+           AND (
+               -- Campanha por modelo (Shark): prefixo do model_simplified.
+               (
+                   c.match_type = 'MODEL'
+                   AND CONVERT(UPPER(TRIM(g.model_simplified)) USING utf8mb4)
+                           COLLATE utf8mb4_unicode_ci
+                       LIKE CONCAT(
+                           CONVERT(UPPER(TRIM(c.model_simplified_prefix)) USING utf8mb4)
+                               COLLATE utf8mb4_unicode_ci,
+                           '%'
+                       )
                )
+               -- Regra 7: campanha por lista, só ciclos não CLOSED.
+               OR (
+                   c.match_type = 'CHASSIS_LIST'
+                   AND g.demo_status <> 'CLOSED'
+                   AND EXISTS (
+                       SELECT 1
+                       FROM bp_datalake.dim_demo_campaign_chassis AS cc
+                       WHERE cc.campaign_code = c.campaign_code
+                         AND cc.chassis_serial_number = g.chassis_serial_number
+                   )
+               )
+           )
 
         WHERE g.event_sequence = 1
           AND g.event_type = 'DEMO'

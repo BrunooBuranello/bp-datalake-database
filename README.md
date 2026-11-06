@@ -73,6 +73,8 @@ database/demo_history/04_sp_gold_z17_demo_enrich_model.sql
 database/demo_history/05_validate_demo_history_pipeline.sql
 database/demo_history/06_create_dim_demo_campaign.sql
 database/demo_history/07_sp_gold_z17_demo_apply_campaign.sql
+database/demo_history/08_alter_dim_demo_campaign_chassis_list.sql
+database/demo_history/09_seed_campaign_regularizacao_20261119.sql
 ```
 
 Ordem dentro da pipeline:
@@ -93,8 +95,18 @@ nunca muda. O fim natural da campanha é o `issuance_to`: DEMOs emitidos dentro
 da janela mantêm o prazo até o fim do ciclo. `active = 0` cancela a campanha e
 devolve **todos** os ciclos dela ao padrão na execução seguinte.
 
-Ordem de implantação: `06` (tabela e seed), `04` e `07` (procedures), pipeline e
-depois `05` (validação).
+Campanha por lista (`match_type = 'CHASSIS_LIST'`, script `08`): vale para os
+chassis de `dim_demo_campaign_chassis` (só ciclos não `CLOSED`), com
+`fixed_due_date` opcional (vencimento fixo) e vigência `valid_from`/`valid_to`
+pela **data de hoje**: fora dela a campanha não se aplica e o ciclo volta ao
+padrão. `message_before_table` é o texto que o app mostra no aviso por grupo
+acima da relação dos chassis. A lista é carregada pelo comando
+`load_demo_campaign_chassis` do app (a planilha não vai para o Git). Script
+`09`: campanha de regularização dos DEMO vencidos até 19/11/2026.
+
+Ordem de implantação: `06` (tabela e seed), `08` (colunas e tabela de chassis),
+`04` e `07` (procedures), `09` (campanha), deploy do app, carga dos chassis,
+pipeline (ou `CALL` da `07`) e depois `05` (validação).
 
 Somente uma movimentação posterior com
 `access_key_status = 'VALID'` encerra o ciclo DEMO. Status vazio, desconhecido ou
