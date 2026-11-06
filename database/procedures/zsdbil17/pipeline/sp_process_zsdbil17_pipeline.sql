@@ -267,6 +267,35 @@ BEGIN
 
     /*
     =========================================================
+    14.1 GOLD - CANCELAMENTO MANUAL (PALIATIVO)
+    =========================================================
+
+    Origem:
+        bp_datalake.dim_zsdbil17_manual_cancellation
+        (registrada pelo app "cancellations")
+
+    Chave:
+        chassis_serial_number + invoice_number (active = 1)
+
+    Destinos:
+        Silver -> manual_cancellation / manual_cancelled_at
+        Gold   -> DELETE da NF cancelada
+
+    Regra:
+        - roda depois do Legacy e do modelo, com a Gold completa;
+        - sem fallback: a NF anterior do chassi não volta;
+        - NF nova do mesmo chassi (outro número) entra normal;
+        - em erro, registra ERROR no log e NÃO interrompe a
+          pipeline (a Gold fica como o load_base deixou);
+        - independente: para desligar, remova só este CALL.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_z17_apply_manual_cancellation();
+
+
+    /*
+    =========================================================
     15. DEMO HISTORY - SINCRONIZAÇÃO
     =========================================================
 

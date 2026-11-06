@@ -103,6 +103,43 @@ ainda não validado mantém o ciclo aberto para impedir fechamento prematuro.
 O enriquecimento de modelo precisa ocorrer depois da sincronização porque o
 histórico nasce da Silver, onde `model_simplified` não existe.
 
+## Cancelamento manual de faturamento (paliativo)
+
+Arquivos:
+
+```text
+database/procedures/zsdbil17/gold/07_create_dim_zsdbil17_manual_cancellation.sql
+database/procedures/zsdbil17/gold/08_sp_z17_apply_manual_cancellation.sql
+```
+
+Enquanto os cancelamentos não forem estruturados, o time de BP registra no app
+**Cancelamentos** do BYD Sales Operation as NFs que a ZSDBIL17 ainda não marca
+como `CANCELLED`. O usuário informa chassi + data do faturamento original; o
+app busca a NF na Silver e grava em `dim_zsdbil17_manual_cancellation`, com
+auditoria em `dim_zsdbil17_manual_cancellation_audit_history`.
+
+A `sp_z17_apply_manual_cancellation` roda depois de `sp_gold_z17_enrich_model`
+e antes do DEMO History:
+
+```text
+garante colunas na Silver (só na 1ª vez, fora da transação)
+    -> Silver: manual_cancellation = 'YES' / manual_cancelled_at (chassi + NF ativos)
+    -> Gold:   DELETE das NFs canceladas
+```
+
+Regras:
+
+- chave = chassi + NF; NF nova do mesmo chassi entra na Gold normalmente;
+- sem fallback: a NF anterior do chassi não volta para a Gold;
+- `active = 0` (desativar no app) devolve a NF na execução seguinte;
+- em erro: ROLLBACK, `ERROR` no `etl_execution_log`, e a pipeline **continua**;
+- independente: remover o `CALL` da pipeline desliga o paliativo.
+- **Limite conhecido:** o DEMO History lê a Silver e não usa estas colunas.
+  Uma venda posterior cancelada manualmente ainda fecha o ciclo DEMO.
+
+Ordem de implantação: `07` (tabelas), `08` (procedure), `CALL` isolado para
+criar as colunas da Silver e conferir, e só então a pipeline.
+
 ## Silver
 
 Arquivo:

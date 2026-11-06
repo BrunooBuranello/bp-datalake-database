@@ -618,6 +618,27 @@ CREATE TABLE IF NOT EXISTS silver_zsdbil17_outbound_movements (
 
     /*
     =========================================================
+    17. CANCELAMENTO MANUAL (PALIATIVO)
+    =========================================================
+
+    Mantidas pela sp_z17_apply_manual_cancellation a partir de
+    dim_zsdbil17_manual_cancellation. A procedure também cria
+    as colunas em bancos já existentes (este DDL só vale para
+    tabela nova, porque é CREATE TABLE IF NOT EXISTS).
+
+    A Silver guarda o histórico: a linha fica e recebe 'YES'.
+    Quem tira a NF do faturamento é a mesma procedure, na Gold.
+    */
+
+    manual_cancellation VARCHAR(3) NULL
+        COMMENT 'YES = NF cancelada manualmente no app de cancelamentos; NO = não',
+
+    manual_cancelled_at DATETIME NULL
+        COMMENT 'Data e hora em que o cancelamento manual foi registrado (loaded_at)',
+
+
+    /*
+    =========================================================
     ÍNDICES DE CONSULTA
     =========================================================
     */
