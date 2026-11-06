@@ -130,6 +130,16 @@ pedir tratamento manual), nunca escolher uma das linhas.
 `invoice_number` está sempre com 9 dígitos e zeros à esquerda na Silver: um
 valor digitado pelo usuário precisa ser completado antes da comparação.
 
+Legado 2024/2025 (`silver_invoiced_legacy_2024_2025`): desde 06/11/2026 a NF
+também tem 9 dígitos (`zsdbil17_legacy/03_update_silver_invoiced_legacy_invoice_padding.sql`
+corrigiu a tabela; a `01` já grava assim numa recarga). A Gold recebe o formato
+na carga seguinte, pelo append do legado. Ainda diferente da Z17 no legado
+(fica para um ADR próprio): `issuance_date` e `plant_code` são `TEXT`, a
+collation é `utf8mb4_unicode_ci` e `byd_cnpj_number` vem vazio. Consulta que
+junte as duas origens precisa converter tipo e collation, e conversão no
+`WHERE` impede o uso do índice: filtre cada tabela pela coluna original e
+junte o resultado depois.
+
 ## Cancelamento manual de faturamento (paliativo)
 
 Arquivos:

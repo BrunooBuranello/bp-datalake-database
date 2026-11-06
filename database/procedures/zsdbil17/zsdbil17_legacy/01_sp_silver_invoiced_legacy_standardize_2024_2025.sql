@@ -10,6 +10,8 @@ Objetivo:
 - Consolidar Bronze 2024 + Bronze 2025
 - Carregar silver_invoiced_legacy_2024_2025
 - Aplicar padronizações iniciais
+- invoice_number com 9 dígitos (zeros à esquerda), igual à Z17
+  (06/11/2026; ADR-005 do app cancellations)
 
 IMPORTANTE:
 Esta procedure altera SOMENTE:
@@ -153,7 +155,14 @@ BEGIN
 
         delivery_note_number_picking,
         billing_number_vf01,
-        invoice_number,
+        -- NF com 9 dígitos e zeros à esquerda, o mesmo formato da Silver da
+        -- Z17 (regra "Chave de uma NF de veículo" no README). Valor que não
+        -- for só número fica como veio, sem zeros, para não esconder erro.
+        CASE
+            WHEN TRIM(invoice_number) REGEXP '^[0-9]{1,9}$'
+                THEN LPAD(TRIM(invoice_number), 9, '0')
+            ELSE NULLIF(TRIM(invoice_number), '')
+        END AS invoice_number,
         issuance_date,
         status_doc,
         estornado,
@@ -341,7 +350,14 @@ BEGIN
 
         delivery_note_number_picking,
         billing_number_vf01,
-        invoice_number,
+        -- NF com 9 dígitos e zeros à esquerda, o mesmo formato da Silver da
+        -- Z17 (regra "Chave de uma NF de veículo" no README). Valor que não
+        -- for só número fica como veio, sem zeros, para não esconder erro.
+        CASE
+            WHEN TRIM(invoice_number) REGEXP '^[0-9]{1,9}$'
+                THEN LPAD(TRIM(invoice_number), 9, '0')
+            ELSE NULLIF(TRIM(invoice_number), '')
+        END AS invoice_number,
         issuance_date,
         status_doc,
         estornado,
