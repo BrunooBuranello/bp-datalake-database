@@ -46,6 +46,15 @@
 -- dia sai, só que sem a exclusão manual naquele dia. A Gold
 -- fica exatamente como o load_base deixou.
 --
+-- Desempenho (06/11/2026): a primeira versão comparava com
+-- CONVERT(TRIM(...)) do lado da Silver e da Gold. Isso impede o
+-- índice: com 505 cancelamentos a procedure levou 19 minutos
+-- (1,47 milhão x 505 comparações na Silver, 424 mil x 505 na Gold).
+-- Agora só a temporária (pequena) é convertida e indexada, e as
+-- tabelas grandes são lidas pelo índice de chassi (Silver
+-- idx_sz17_chassis, Gold PRIMARY KEY = chassi). As duas já gravam
+-- chassi e NF sem espaços e com a mesma collation da temporária.
+--
 -- Idempotente: rodar duas vezes dá o mesmo resultado.
 -- ============================================================
 
@@ -181,7 +190,11 @@ BEGIN
 
     DROP TEMPORARY TABLE IF EXISTS tmp_z17_manual_cancellation;
 
-    CREATE TEMPORARY TABLE tmp_z17_manual_cancellation AS
+    -- Índice por chassi: as tabelas grandes procuram cada
+    -- cancelamento por ele em vez de varrer a temporária.
+    CREATE TEMPORARY TABLE tmp_z17_manual_cancellation (
+        KEY idx_tmp_manual_cancellation_chassis (chassis_serial_number)
+    ) AS
     SELECT
         CONVERT(TRIM(c.chassis_serial_number) USING utf8mb4)
             COLLATE utf8mb4_0900_ai_ci AS chassis_serial_number,
@@ -206,70 +219,83 @@ BEGIN
     ============================================================
     3. SILVER - MARCAÇÃO
     ============================================================
-    Um único UPDATE calcula o valor esperado de cada linha
-    (YES quando a chave está na lista, NO caso contrário) e
-    só grava onde o valor atual é diferente. <=> compara NULL
-    com segurança.
-    A UNIQUE (chassi, NF, data, planta) da tabela manual garante
-    no máximo uma correspondência por linha da Silver.
-    plant_code é TEXT na Silver: o TRIM + CONVERT alinha com o
-    VARCHAR da tabela manual.
+    Resultado igual ao de antes: YES + manual_cancelled_at nas
+    linhas da chave ativa; NO + NULL nas demais. Em dois passos,
+    para cada um usar índice:
+
+    3a. Desmarca: só linhas que não estão em NO/NULL (YES de um
+        registro desativado ou linha nova da carga incremental,
+        que chega com NULL) e que não casam com a temporária. O
+        NOT EXISTS procura pelo índice de chassi da temporária.
+    3b. Marca: parte da temporária (STRAIGHT_JOIN) e acha as linhas
+        da Silver pelo idx_sz17_chassis. Só grava o que muda.
     */
 
     UPDATE bp_datalake.silver_zsdbil17_outbound_movements AS s
-    LEFT JOIN tmp_z17_manual_cancellation AS c
-        ON c.chassis_serial_number =
-               CONVERT(TRIM(s.chassis_serial_number) USING utf8mb4)
-                   COLLATE utf8mb4_0900_ai_ci
-       AND c.invoice_number =
-               CONVERT(TRIM(s.invoice_number) USING utf8mb4)
-                   COLLATE utf8mb4_0900_ai_ci
-       AND c.original_issuance_date = s.issuance_date
-       AND c.plant_code =
-               CONVERT(TRIM(s.plant_code) USING utf8mb4)
-                   COLLATE utf8mb4_0900_ai_ci
     SET
-        s.manual_cancellation =
-            CASE WHEN c.chassis_serial_number IS NULL THEN 'NO' ELSE 'YES' END,
-        s.manual_cancelled_at = c.loaded_at
+        s.manual_cancellation = 'NO',
+        s.manual_cancelled_at = NULL
     WHERE
-        NOT (
-            s.manual_cancellation <=>
-                CASE WHEN c.chassis_serial_number IS NULL THEN 'NO' ELSE 'YES' END
+        (
+            NOT (s.manual_cancellation <=> 'NO')
+            OR s.manual_cancelled_at IS NOT NULL
         )
-        OR NOT (s.manual_cancelled_at <=> c.loaded_at);
+        AND NOT EXISTS (
+            SELECT 1
+            FROM tmp_z17_manual_cancellation AS c
+            WHERE c.chassis_serial_number = s.chassis_serial_number
+              AND c.invoice_number = TRIM(s.invoice_number)
+              AND c.original_issuance_date = s.issuance_date
+              AND c.plant_code = TRIM(s.plant_code)
+        );
 
     SET v_silver_rows_updated = ROW_COUNT();
 
+    UPDATE tmp_z17_manual_cancellation AS c
+    STRAIGHT_JOIN bp_datalake.silver_zsdbil17_outbound_movements AS s
+        ON s.chassis_serial_number = c.chassis_serial_number
+       AND TRIM(s.invoice_number) = c.invoice_number
+       AND s.issuance_date = c.original_issuance_date
+       AND TRIM(s.plant_code) = c.plant_code
+    SET
+        s.manual_cancellation = 'YES',
+        s.manual_cancelled_at = c.loaded_at
+    WHERE
+        NOT (s.manual_cancellation <=> 'YES')
+        OR NOT (s.manual_cancelled_at <=> c.loaded_at);
 
+    SET v_silver_rows_updated = v_silver_rows_updated + ROW_COUNT();
+
+
+    -- Linhas marcadas YES, contadas pela temporária (índice), sem
+    -- varrer a Silver inteira.
     SELECT COUNT(*)
     INTO v_silver_rows_marked
-    FROM bp_datalake.silver_zsdbil17_outbound_movements
-    WHERE manual_cancellation = 'YES';
+    FROM tmp_z17_manual_cancellation AS c
+    STRAIGHT_JOIN bp_datalake.silver_zsdbil17_outbound_movements AS s
+        ON s.chassis_serial_number = c.chassis_serial_number
+       AND TRIM(s.invoice_number) = c.invoice_number
+       AND s.issuance_date = c.original_issuance_date
+       AND TRIM(s.plant_code) = c.plant_code;
 
 
     /*
     ============================================================
     4. GOLD - REMOÇÃO
     ============================================================
-    A Gold já grava chassi e NF com TRIM (load_base e legacy);
-    o CONVERT/COLLATE só alinha a collation com a temporária.
-    Mesma chave de quatro campos da Silver.
+    A Gold já grava chassi e NF com TRIM (load_base e legacy) e
+    na collation da temporária. Parte da temporária e acha a linha
+    pela PRIMARY KEY (chassi). Mesma chave de quatro campos da
+    Silver.
     */
 
     DELETE g
-    FROM bp_datalake.gold_zsdbil17_faturamento AS g
-    INNER JOIN tmp_z17_manual_cancellation AS c
-        ON c.chassis_serial_number =
-               CONVERT(g.chassis_serial_number USING utf8mb4)
-                   COLLATE utf8mb4_0900_ai_ci
-       AND c.invoice_number =
-               CONVERT(g.invoice_number USING utf8mb4)
-                   COLLATE utf8mb4_0900_ai_ci
-       AND c.original_issuance_date = g.issuance_date
-       AND c.plant_code =
-               CONVERT(TRIM(g.plant_code) USING utf8mb4)
-                   COLLATE utf8mb4_0900_ai_ci;
+    FROM tmp_z17_manual_cancellation AS c
+    STRAIGHT_JOIN bp_datalake.gold_zsdbil17_faturamento AS g
+        ON g.chassis_serial_number = c.chassis_serial_number
+       AND g.invoice_number = c.invoice_number
+       AND g.issuance_date = c.original_issuance_date
+       AND TRIM(g.plant_code) = c.plant_code;
 
     SET v_gold_rows_deleted = ROW_COUNT();
 
