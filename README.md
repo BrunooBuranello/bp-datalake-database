@@ -123,6 +123,7 @@ Arquivos:
 database/nfe_outbound_xml/01_rename_bronze_xml_raw.sql
 database/nfe_outbound_xml/02_dedupe_and_unique_access_key.sql
 database/nfe_outbound_xml/03_validate_nfe_outbound_xml.sql
+database/nfe_outbound_xml/04_drop_bronze_xml_raw_view.sql
 ```
 
 `bronze_xml_raw` vira `bronze_nfe_outbound_xml` (com VIEW de compatibilidade
@@ -130,6 +131,8 @@ no nome antigo), as cópias da mesma chave de acesso são removidas (backup em
 `bronze_nfe_outbound_xml_removed_20261109`) e a chave ganha `UNIQUE`. A carga
 é feita pelo app (`xml_reader`, comando `load_nfe_outbound_xml`), ao fim do
 download diário dos XMLs. Ordem: `01` → `02` → `03` → deploy do app → backfill.
+O `04` (09/11/2026) remove a VIEW de compatibilidade `bronze_xml_raw`, que
+só o app usava; a partir dele só existe o nome novo.
 
 ## Chave de uma NF de veículo (regra do projeto)
 
