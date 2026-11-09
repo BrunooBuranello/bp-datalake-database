@@ -14,14 +14,21 @@ Tabela de destino:
 
 Tabelas de referência:
     dim_zsdbil17_material_exclusion
-    material_master
+    bronze_vehicle_material_code
+
+    A antiga material_master ficou desatualizada e foi
+    substituída pelo cadastro do portal Material Code
+    (bronze_vehicle_material_code). Materiais novos só
+    existem na tabela nova; com a fonte antiga eles caíam
+    em UNKNOWN mesmo com modelo cadastrado. Em 09/11/2026
+    a tabela nova continha todos os códigos da antiga.
 
 Coluna gerenciada:
     vehicle_type_code
 
 Prioridade:
 1. Material na dimensão de exclusão -> BUS_TRUCK
-2. Material na material_master      -> CAR
+2. Material no Material Code        -> CAR
 3. Sem correspondência              -> UNKNOWN
 
 Regras de publicação:
@@ -218,8 +225,14 @@ BEGIN
         4.3. CARREGA OS MATERIAIS DE CARROS
         ========================================================
 
-        Qualquer material existente em material_master.cod_sap
-        será considerado CAR.
+        Qualquer material existente em
+        bronze_vehicle_material_code.cod_sap será considerado
+        CAR, incluindo registros Legacy (mesma regra do
+        sp_gold_z17_enrich_model).
+
+        CAST + CONVERT: cod_sap é lido como texto e convertido
+        para a collation do mapa, evitando erro de mistura de
+        collations entre as tabelas.
 
         A prioridade BUS_TRUCK será preservada pelo
         INSERT IGNORE e pela chave primária.
@@ -232,12 +245,12 @@ BEGIN
             vehicle_type_code
         )
         SELECT DISTINCT
-            CONVERT(TRIM(m.cod_sap) USING utf8mb4)
+            CONVERT(TRIM(CAST(m.cod_sap AS CHAR)) USING utf8mb4)
                 COLLATE utf8mb4_0900_ai_ci,
             'CAR'
-        FROM bp_datalake.material_master AS m
+        FROM bp_datalake.bronze_vehicle_material_code AS m
         WHERE m.cod_sap IS NOT NULL
-          AND TRIM(m.cod_sap) <> '';
+          AND TRIM(CAST(m.cod_sap AS CHAR)) <> '';
 
 
         /*

@@ -168,6 +168,36 @@ junte as duas origens precisa converter tipo e collation, e conversão no
 `WHERE` impede o uso do índice: filtre cada tabela pela coluna original e
 junte o resultado depois.
 
+## Classificação do tipo de veículo (Silver 07)
+
+Arquivo:
+
+```text
+database/procedures/zsdbil17/silver/07_sp_silver_z17_vehicle_type.sql
+```
+
+A `sp_silver_z17_vehicle_type` preenche `vehicle_type_code` na Silver, antes
+da carga da Gold:
+
+| Prioridade | Regra | Resultado | Entra no Invoiced DB? |
+|---|---|---|---|
+| 1 | Material em `dim_zsdbil17_material_exclusion` (`active = 1`) | `BUS_TRUCK` | Não |
+| 2 | Material em `bronze_vehicle_material_code.cod_sap` | `CAR` | Sim |
+| 3 | Sem correspondência | `UNKNOWN` | Sim |
+
+- Desde 09/11/2026 a fonte de carros é a `bronze_vehicle_material_code`
+  (cadastro do portal Material Code). A `material_master` legada ficou
+  desatualizada: materiais novos caíam em `UNKNOWN`. A tabela nova continha
+  todos os códigos da antiga no momento da troca.
+- Ônibus e caminhões entram na exclusão manualmente (`INSERT` com `material`,
+  `vehicle_category` = `BUS`/`TRUCK` e `description`). Sem isso, eles ficam
+  `UNKNOWN`, entram na Gold e aparecem com `model_simplified = 'UNKNOWN'`.
+- A procedure só reprocessa linhas `NULL`, vazias ou `UNKNOWN`. Um material
+  novo na exclusão ou no Material Code é reclassificado na execução seguinte;
+  mudar um material já `CAR`/`BUS_TRUCK` exige reclassificação completa.
+- A Gold é recarregada a cada pipeline: a correção na Silver só aparece no
+  Invoiced DB depois da próxima execução da pipeline.
+
 ## Cancelamento manual de faturamento (paliativo)
 
 Arquivos:
