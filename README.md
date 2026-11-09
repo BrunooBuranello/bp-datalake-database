@@ -115,6 +115,22 @@ ainda não validado mantém o ciclo aberto para impedir fechamento prematuro.
 O enriquecimento de modelo precisa ocorrer depois da sincronização porque o
 histórico nasce da Silver, onde `model_simplified` não existe.
 
+## NF-e de saída lidas dos XMLs
+
+Arquivos:
+
+```text
+database/nfe_outbound_xml/01_rename_bronze_xml_raw.sql
+database/nfe_outbound_xml/02_dedupe_and_unique_access_key.sql
+database/nfe_outbound_xml/03_validate_nfe_outbound_xml.sql
+```
+
+`bronze_xml_raw` vira `bronze_nfe_outbound_xml` (com VIEW de compatibilidade
+no nome antigo), as cópias da mesma chave de acesso são removidas (backup em
+`bronze_nfe_outbound_xml_removed_20261109`) e a chave ganha `UNIQUE`. A carga
+é feita pelo app (`xml_reader`, comando `load_nfe_outbound_xml`), ao fim do
+download diário dos XMLs. Ordem: `01` → `02` → `03` → deploy do app → backfill.
+
 ## Chave de uma NF de veículo (regra do projeto)
 
 Para buscar, comparar ou excluir **uma NF específica de um chassi** na Silver
