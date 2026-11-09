@@ -167,14 +167,15 @@ BEGIN
 
     Fontes:
         dim_zsdbil17_material_exclusion
-        material_master
+        bronze_vehicle_material_code (Material Code;
+        substituiu a material_master legada)
 
     Destino:
         vehicle_type_code
 
     Prioridade:
         1. Material na exclusão -> BUS_TRUCK
-        2. Material na master   -> CAR
+        2. Material no Material Code -> CAR
         3. Sem correspondência  -> UNKNOWN
 
     A execução ocorre antes do carregamento da Gold para
