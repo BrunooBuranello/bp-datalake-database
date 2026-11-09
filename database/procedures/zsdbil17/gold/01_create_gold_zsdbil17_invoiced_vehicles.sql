@@ -241,6 +241,14 @@ CREATE TABLE bp_datalake.gold_zsdbil17_faturamento (
 
     invoice_series VARCHAR(8) NULL,
 
+    /*
+    Horário de processamento da NF no SAP (coluna "first time"
+    da Z17), copiado da Silver. Junto com issuance_date ordena
+    os faturamentos do mesmo dia (FIFO da Liberação de Veículos).
+    NULL no legado 2024/2025, que não traz o horário.
+    */
+    proc_time TIME NULL,
+
 
     /*
     ============================================================

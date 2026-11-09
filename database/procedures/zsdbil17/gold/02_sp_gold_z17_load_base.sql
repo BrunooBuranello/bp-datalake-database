@@ -522,6 +522,9 @@ BEGIN
 
         invoice_series,
 
+        -- Horário da NF no SAP: desempate do FIFO da Liberação.
+        proc_time,
+
         no_do_motor,
         codigo_da_cor,
 
@@ -726,6 +729,9 @@ BEGIN
             TRIM(s.invoice_series),
             ''
         ),
+
+        -- Já é TIME na Silver (texto inválido virou NULL lá).
+        s.proc_time,
 
         NULLIF(
             TRIM(s.no_do_motor),

@@ -243,6 +243,32 @@ criar as colunas da Silver e conferir, e só então a pipeline. O `09` só vale
 para a tabela criada pela primeira versão do `07` (chave chassi + NF): rodar
 uma vez, com a tabela vazia, e recriar o `08` em seguida.
 
+## Horário da NF na Gold (`proc_time`)
+
+Arquivo:
+
+```text
+database/procedures/zsdbil17/gold/10_alter_gold_zsdbil17_add_proc_time.sql
+```
+
+A `gold_zsdbil17_faturamento` tem `proc_time` (`TIME`), o horário de
+processamento da NF no SAP (coluna "first time" da Z17), copiado da Silver pela
+`sp_gold_z17_load_base`. Serve para ordenar faturamentos do mesmo dia
+(`issuance_date`, `proc_time`, `invoice_number`) no FIFO da Liberação de
+Veículos, que lê apenas a Gold.
+
+- Legado 2024/2025: sempre `NULL` (a origem não tem horário).
+- Aplicado em produção em 09/11/2026: `ALTER` + backfill pelo `id_bronze` da
+  Silver (206.607 de 206.608 NFs atuais preenchidas) + procedure `02`
+  recriada. Instalação nova: o `01` já cria a coluna; não rode o `10`.
+
+## Liberação de Veículos
+
+Pasta `database/vehicle_release/` (tabelas bronze, auditorias `*_audit_history`
+e `sp_sync_bronze_vehicle_release`, chamada no passo 18.1 da pipeline Z17).
+Regras, escopo e a **chave do CRM (chassi + NF + data)** com a consulta de
+referência estão em `database/vehicle_release/README.md`.
+
 ## Silver
 
 Arquivo:
