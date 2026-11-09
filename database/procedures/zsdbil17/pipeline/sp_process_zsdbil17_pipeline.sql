@@ -402,6 +402,35 @@ BEGIN
 
     /*
     =========================================================
+    18.1 LIBERAÇÃO DE VEÍCULOS
+    =========================================================
+
+    Origem:
+        gold_zsdbil17_faturamento (já completa e enriquecida)
+        + CRM, BASE do financeiro e histórico manual
+
+    Destinos:
+        bronze_vehicle_release
+        bronze_vehicle_release_audit_history
+        bronze_vehicle_release_run_audit_history
+
+    Regra:
+        - roda por último, como a DEMO: lê a Gold pronta;
+        - em erro grava ERROR na run_audit_history e NÃO
+          interrompe a pipeline (sem RESIGNAL);
+        - idempotente.
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_sync_bronze_vehicle_release(
+        'PIPELINE',
+        'pipeline',
+        @vehicle_release_run_id
+    );
+
+
+    /*
+    =========================================================
     19. FINALIZA PIPELINE
     =========================================================
     */
