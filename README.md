@@ -269,6 +269,15 @@ e `sp_sync_bronze_vehicle_release`, chamada no passo 18.1 da pipeline Z17).
 Regras, escopo e a **chave do CRM (chassi + NF + data)** com a consulta de
 referência estão em `database/vehicle_release/README.md`.
 
+## Linhas rejeitadas da Z17
+
+Pasta `database/zsdbil17_rejected_rows/`: `bronze_zsdbil17_rejected_rows`
+recebe (APPEND) as linhas do CSV da Z17 que o pré-processamento do BYD Sales
+Operation rejeitou (formato fora do contrato), com a linha bruta, o motivo e a
+auditoria (ADR-012 e ADR-014 de `sap_service/docs/DECISIONS.md`). Nenhuma
+procedure lê esta tabela; ela serve para conferência e reprocessamento.
+Aplicar o `01` **antes** do deploy do app.
+
 ## Silver
 
 Arquivo:
