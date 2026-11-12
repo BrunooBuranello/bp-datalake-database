@@ -14,7 +14,9 @@ Sales Operation (ADR-004 de `data_integrations/docs/DECISIONS.md`). Substitui o
 | `03_create_bronze_finance_credit_load_run_audit_history.sql` | `bronze_finance_credit_load_run_audit_history` | Uma linha por execução: arquivo, SHA-256, contagens, status |
 
 As tabelas originais estão em `../vehicle_release/04` e `05` (criadas vazias em
-09/11/2026). `bronze_espelho_credito` (CARTA + EMBARQUE) já existia e não muda.
+09/11/2026). `bronze_espelho_credito` (CARTA + EMBARQUE) **voltou a ser carga
+manual** pela tela Data Ingestion em 11/11/2026 (ADR-007): a integração grava
+só a BASE e nem lê as abas de crédito.
 
 ## Como a carga funciona
 
@@ -22,7 +24,7 @@ As tabelas originais estão em `../vehicle_release/04` e `05` (criadas vazias em
 2. Arquivo igual ao da última carga com sucesso → `SKIPPED`.
 3. Cabeçalho diferente / aba vazia / carga tirando mais de 20% da BASE →
    `BLOCKED` (nada gravado).
-4. BASE diferencial + auditoria + espelho numa transação só → `SUCCESS`.
+4. BASE diferencial + auditoria numa transação só → `SUCCESS`.
 
 ## Consultas úteis
 
