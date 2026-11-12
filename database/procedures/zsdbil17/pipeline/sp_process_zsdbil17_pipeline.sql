@@ -431,6 +431,35 @@ BEGIN
 
     /*
     =========================================================
+    18.2 AR / CRÉDITO (Financeiro)
+    =========================================================
+
+    Origem:
+        gold_zsdbil17_faturamento + dim_cond_pagamento
+
+    Destinos:
+        gold_finance_credit_receivable
+        gold_finance_credit_receivable_run_audit_history
+
+    Regra:
+        - lê a Gold pronta, como a Liberação;
+        - em erro grava ERROR na run_audit_history e NÃO
+          interrompe a pipeline (sem RESIGNAL);
+        - nunca altera o recebido (lançamentos do app);
+        - idempotente.
+        Detalhes: database/finance/README.md (ADR-001 do app finance).
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_sync_gold_finance_credit_receivable(
+        'PIPELINE',
+        'pipeline',
+        @finance_credit_receivable_run_id
+    );
+
+
+    /*
+    =========================================================
     19. FINALIZA PIPELINE
     =========================================================
     */
