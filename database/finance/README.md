@@ -30,7 +30,12 @@ procedure existir; senão a Z17 falha.
 
 O saldo inicial (`CALL sp_load_finance_credit_opening_balance('<usuário>')`)
 roda **na virada**, combinada com o Financeiro: depois da última carga da
-planilha e antes do primeiro lançamento pelo app.
+planilha e antes do primeiro lançamento pelo app. Casa chassi + NF + data e,
+quando a data da planilha está errada, chassi + NF com quatro travas (NF
+única, mesmo valor de NF, uma linha da planilha por NF, NF não casada pela
+data); nunca grava dois saldos iniciais na mesma NF (finance ADR-007).
+Ensaio de 12/11/2026: 354.048 pela data + 138 por chassi + NF; 25.874 sem
+NF.
 
 ## Regras
 
