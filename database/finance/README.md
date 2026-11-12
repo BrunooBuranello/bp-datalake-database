@@ -20,22 +20,21 @@ Financeiro.
 | `03_create_bronze_finance_credit_receipt.sql` | `bronze_finance_credit_receipt` | Lançamentos de recebimento (livro-razão; estorno em vez de apagar) |
 | `04_create_bronze_finance_credit_receipt_audit_history.sql` | `..._receipt_audit_history` | Quem lançou / estornou, quando, quanto |
 | `05_sp_sync_gold_finance_credit_receivable.sql` | `sp_sync_gold_finance_credit_receivable` | Upsert a partir da Gold (passo 18.2 da pipeline Z17) |
-| `06_sp_load_finance_credit_opening_balance.sql` | `sp_load_finance_credit_opening_balance` | Carga ÚNICA do saldo inicial ("Recebido" da planilha) |
+| `06_sp_load_finance_credit_opening_balance.sql` | `sp_load_finance_credit_opening_balance` | Carga ÚNICA do saldo inicial (chaves da aba CARS = NF paga 100%) |
+| `07_create_bronze_finance_credit_cars.sql` | `bronze_finance_credit_cars` | Foto da aba CARS, gravada por `manage.py load_finance_credit_cars` |
 | `../procedures/zsdbil17/pipeline/sp_process_zsdbil17_pipeline.sql` | pipeline Z17 | Chama o sync no passo 18.2 |
 
-**Ordem do deploy:** 01 → 02 → 03 → 04 → 05 → 06 →
+**Ordem do deploy:** 01 → 02 → 03 → 04 → 05 → 07 → 06 →
 `CALL sp_sync_gold_finance_credit_receivable('MANUAL', '<usuário>', @run_id);`
 → pipeline (passo 18.2). A pipeline só pode ser atualizada **depois** que a
 procedure existir; senão a Z17 falha.
 
-O saldo inicial (`CALL sp_load_finance_credit_opening_balance('<usuário>')`)
-roda **na virada**, combinada com o Financeiro: depois da última carga da
-planilha e antes do primeiro lançamento pelo app. Casa chassi + NF + data e,
-quando a data da planilha está errada, chassi + NF com quatro travas (NF
-única, mesmo valor de NF, uma linha da planilha por NF, NF não casada pela
-data); nunca grava dois saldos iniciais na mesma NF (finance ADR-007).
-Ensaio de 12/11/2026: 354.048 pela data + 138 por chassi + NF; 25.874 sem
-NF.
+O saldo inicial roda **na virada**, combinada com o Financeiro: o Financeiro
+para de lançar na planilha → `python manage.py load_finance_credit_cars --user
+<usuário>` (foto da aba CARS) → `CALL sp_load_finance_credit_opening_balance('<usuário>')`.
+Cada chassi + NF da CARS com exatamente 1 NF no AR / Crédito vira um
+lançamento com o valor da NF e a PAYMENT DATE quando a chave tem uma data só;
+nunca dois saldos iniciais na mesma NF (finance ADR-008).
 
 ## Regras
 
@@ -77,16 +76,17 @@ LEFT JOIN bp_datalake.bronze_finance_credit_receipt AS r
 GROUP BY g.id, g.received_amount
 HAVING g.received_amount <> ledger_sum;
 
--- Linhas da BASE da planilha com recebido e sem NF no AR / Crédito
+-- Chaves da aba CARS (foto) sem NF no AR / Crédito
 -- (ficaram fora do saldo inicial)
-SELECT b.chassis, b.invoice_number, b.issuance_date, b.amount_received
-FROM bp_datalake.bronze_finance_credit_base AS b
+SELECT c.chassis_serial_number, c.invoice_number,
+       COUNT(*) AS cars_rows, MIN(c.payment_date) AS first_payment_date
+FROM bp_datalake.bronze_finance_credit_cars AS c
 LEFT JOIN bp_datalake.gold_finance_credit_receivable AS g
-    ON  g.chassis_serial_number = b.chassis
-    AND g.invoice_number = LPAD(TRIM(b.invoice_number), 9, '0')
-    AND g.issuance_date = DATE(LEFT(b.issuance_date, 10))
-WHERE g.id IS NULL
-  AND CAST(REPLACE(b.amount_received, ',', '.') AS DECIMAL(15,2)) <> 0;
+    ON  g.chassis_serial_number = c.chassis_serial_number
+    AND g.invoice_number = c.invoice_number
+WHERE c.key_valid = 'YES'
+  AND g.id IS NULL
+GROUP BY c.chassis_serial_number, c.invoice_number;
 ```
 
 ## Rollback
