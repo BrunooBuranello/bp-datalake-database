@@ -32,6 +32,13 @@
 --   - received_amount NUNCA é alterado aqui (é a soma dos
 --     lançamentos, mantida pelo app).
 --   - NF que saiu da Gold vira in_gold = 'NO' (não é apagada).
+--   - CNPJ/CPF com o zero à esquerda de volta (ADR-009, 12/11/2026):
+--     a Gold Z17 guarda alguns documentos sem os zeros iniciais
+--     (CNPJ com 12-13 dígitos, CPF com 9-10). Completamos pelo
+--     tamanho: 12-13 -> 14 (CNPJ), 9-10 -> 11 (CPF). Conferido com
+--     os dígitos verificadores em 12/11/2026: 33 de 34 CNPJs e 25 de
+--     25 CPFs ficam válidos. Sem isso a raiz (8 primeiros dígitos)
+--     sai errada e o CNPJ não casa com a planilha de crédito.
 --
 -- SEGURANÇA DA OPERAÇÃO:
 --   - GET_LOCK impede duas execuções simultâneas.
@@ -168,10 +175,19 @@ BEGIN
         END AS sales_type,
 
         g.sold_to_party_code,
-        g.sold_to_party_cnpj,
+        -- Zeros à esquerda de volta (ver REGRAS no cabeçalho, ADR-009).
+        CASE
+            WHEN g.sold_to_party_cnpj REGEXP '^[0-9]{12,13}$' THEN LPAD(g.sold_to_party_cnpj, 14, '0')
+            WHEN g.sold_to_party_cnpj REGEXP '^[0-9]{9,10}$' THEN LPAD(g.sold_to_party_cnpj, 11, '0')
+            ELSE g.sold_to_party_cnpj
+        END AS sold_to_party_cnpj,
         g.sold_to_party_name,
         g.ship_to_party_code,
-        g.ship_to_party_cnpj,
+        CASE
+            WHEN g.ship_to_party_cnpj REGEXP '^[0-9]{12,13}$' THEN LPAD(g.ship_to_party_cnpj, 14, '0')
+            WHEN g.ship_to_party_cnpj REGEXP '^[0-9]{9,10}$' THEN LPAD(g.ship_to_party_cnpj, 11, '0')
+            ELSE g.ship_to_party_cnpj
+        END AS ship_to_party_cnpj,
         g.ship_to_party_name,
         g.dealer_group,
         g.model_simplified,
