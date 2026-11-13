@@ -209,6 +209,12 @@ CREATE TABLE bp_datalake.gold_zsdbil17_faturamento (
 
     billing_number_vf01 VARCHAR(10) NULL,
 
+    /*
+    Remessa (delivery) do SAP, copiada da Silver
+    (delivery_note_number_picking). NULL no legado 2024/2025.
+    */
+    delivery_note_number_picking VARCHAR(20) NULL,
+
     iva VARCHAR(20) NULL,
 
     dir_fiscal_icms VARCHAR(20) NULL,

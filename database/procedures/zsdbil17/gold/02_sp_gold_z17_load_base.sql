@@ -513,6 +513,7 @@ BEGIN
         sales_order_number,
 
         billing_number_vf01,
+        delivery_note_number_picking,
         iva,
         dir_fiscal_icms,
         dir_fiscal_ipi,
@@ -692,6 +693,12 @@ BEGIN
 
         NULLIF(
             TRIM(s.billing_number_vf01),
+            ''
+        ),
+
+        -- Remessa (delivery) do SAP; mesmo tratamento dos documentos SAP.
+        NULLIF(
+            TRIM(s.delivery_note_number_picking),
             ''
         ),
 
