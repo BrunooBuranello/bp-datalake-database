@@ -42,6 +42,10 @@ nunca dois saldos iniciais na mesma NF (finance ADR-008).
   B4 Táxi, B5 Venda Direta. No legado 2024/2025 (outros códigos de division),
   entra pela descrição RESALE / TEST DRIVE / DIRECT SALE.
 - **Cliente:** Revenda e Test Drive → sold-to; demais → ship-to.
+- **CNPJ/CPF com zero à esquerda:** a Gold Z17 guarda alguns documentos sem os
+  zeros iniciais. O sync completa pelo tamanho: 12-13 dígitos → 14 (CNPJ),
+  9-10 → 11 (CPF). A raiz (`customer_cnpj_root`) sai do CNPJ já completo
+  (finance ADR-009).
 - **Vencimento:** emissão + dias da `dim_cond_pagamento`
   (`desc_prazo_pgto_atribuicao_bp` numérico ou "dentro de N dias" do texto
   SAP; "pagamento imediato" = 0). Sem dias → `due_date` NULL.
