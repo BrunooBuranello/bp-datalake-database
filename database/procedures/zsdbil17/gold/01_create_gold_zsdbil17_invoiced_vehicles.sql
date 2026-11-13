@@ -114,6 +114,13 @@ CREATE TABLE bp_datalake.gold_zsdbil17_faturamento (
 
     store_name_crm VARCHAR(100) NULL,
 
+    /*
+    Código da loja no CRM (mapping_dealer_expansion.store_code), da mesma
+    linha do mapeamento que dá o store_name_crm. NULL sem match no CRM,
+    no fallback BYD Internal e no legado 2024/2025.
+    */
+    store_code VARCHAR(20) NULL,
+
     dealer_group VARCHAR(100) NULL,
 
     brand_dealer VARCHAR(100) NULL,

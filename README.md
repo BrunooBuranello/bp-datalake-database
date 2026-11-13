@@ -243,6 +243,26 @@ criar as colunas da Silver e conferir, e só então a pipeline. O `09` só vale
 para a tabela criada pela primeira versão do `07` (chave chassi + NF): rodar
 uma vez, com a tabela vazia, e recriar o `08` em seguida.
 
+## Código da loja na Gold (`store_code`)
+
+Arquivo:
+
+```text
+database/procedures/zsdbil17/gold/12_alter_gold_zsdbil17_add_store_code.sql
+```
+
+A `gold_zsdbil17_faturamento` tem `store_code`, o código da loja no CRM
+(`bronze.mapping_dealer_expansion.store_code`), gravado pela
+`sp_gold_z17_enrich` (procedure `04`) junto com `store_name_crm`, da mesma
+linha do mapeamento (prioridade de status DN > OLD > Pending > Pátio > Yard >
+Store).
+
+- Sem match no CRM, fallback BYD Internal e legado 2024/2025: `NULL`.
+- Na simulação de 13/11/2026: 133.805 de 212.712 NFs atuais com código; das
+  208.727 com match no CRM, ~75 mil vêm de lojas sem `store_code` preenchido.
+- Ordem: `12` (ALTER) → recriar a `04` → `CALL sp_gold_z17_enrich()` (ou
+  esperar a próxima pipeline).
+
 ## Horário da NF na Gold (`proc_time`)
 
 Arquivo:

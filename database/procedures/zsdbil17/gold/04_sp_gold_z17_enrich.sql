@@ -115,6 +115,10 @@ BEGIN
 
     Destinos:
         store_name_crm
+        store_code      (código da loja no CRM, da mesma linha
+                         do mapeamento; NULL sem match no CRM e
+                         no fallback BYD Internal, que não tem
+                         código de loja; incluído em 13/11/2026)
         dealer_group
         brand_dealer
 
@@ -165,6 +169,7 @@ BEGIN
             ranked.sap_code,
             ranked.store_name_crm,
             ranked.store_name,
+            ranked.store_code,
             ranked.dealer_group,
             ranked.brand,
             ranked.status
@@ -175,6 +180,7 @@ BEGIN
                 d.sap_code,
                 d.store_name_crm,
                 d.store_name,
+                d.store_code,
                 d.dealer_group,
                 d.brand,
                 d.status,
@@ -285,10 +291,20 @@ BEGIN
 
 
     -- --------------------------------------------------------
-    -- ATUALIZAÇÃO DAS TRÊS COLUNAS
+    -- ATUALIZAÇÃO DAS QUATRO COLUNAS
     -- --------------------------------------------------------
 
     SET
+
+        -- STORE CODE
+        -- Mesma linha do CRM escolhida para o store_name_crm
+        -- (ranked.rn = 1). Sem match (d.sap_code NULL) fica NULL:
+        -- o fallback BYD Internal não tem código de loja.
+        g.store_code =
+            LEFT(
+                NULLIF(NULLIF(TRIM(d.store_code), ''), '-'),
+                20
+            ),
 
         -- STORE NAME CRM
         g.store_name_crm =
@@ -378,6 +394,14 @@ BEGIN
       AND (
 
         NOT (
+            g.store_code <=>
+            LEFT(
+                NULLIF(NULLIF(TRIM(d.store_code), ''), '-'),
+                20
+            )
+        )
+
+        OR NOT (
             g.store_name_crm <=>
 
             CASE
