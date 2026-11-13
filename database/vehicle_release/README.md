@@ -13,6 +13,13 @@ Sales Operation). Substitui o processo em Google Sheets + `Liberação.xlsm`.
 | `04_create_bronze_finance_credit_base.sql` | `bronze_finance_credit_base` | BASE do controle de crédito do Financeiro (vazia até o script de carga) |
 | `05_create_bronze_finance_credit_base_audit_history.sql` | `bronze_finance_credit_base_audit_history` | Diferenças entre cargas da BASE (rotina a definir) |
 | `06_sp_sync_bronze_vehicle_release.sql` | `sp_sync_bronze_vehicle_release` | Monta a foto, grava eventos e a execução |
+| `07_alter_vehicle_release_governance.sql` | ALTER nas tabelas 01–03 | Foto do CRM congelada, alertas, foto do evento, totais novos (12/11/2026) |
+| `08_create_bronze_vehicle_release_manual_release.sql` | `bronze_vehicle_release_manual_release` | Liberação offline registrada no app (NF sem pedido no CRM) |
+| `09_sp_register_vehicle_release_manual.sql` | `sp_register_vehicle_release_manual` | Registra a liberação offline (motivo obrigatório) |
+| `10_sp_accept_vehicle_release_crm_change.sql` | `sp_accept_vehicle_release_crm_change` | Aceita a alteração do pedido no CRM (congela a foto de novo) |
+
+Deploy da governança (12/11/2026): **07 → 08 → recriar 06 → 09 → 10**, fora do
+horário da Z17. A 06 nova grava as colunas do 07 e lê a tabela do 08.
 
 Chamada no fim da `sp_process_zsdbil17_pipeline` (passo 18.1, depois da DEMO)
 e pelo botão do app:
@@ -26,7 +33,7 @@ SELECT * FROM bp_datalake.bronze_vehicle_release_run_audit_history WHERE run_id 
 
 | Grupo | Tipos de venda (Gold `division`) | Situação |
 |---|---|---|
-| Grupo 1 | B1 Resale, B2 Test Drive, locadoras (lista de CNPJs do app) | Fase 1 (B1/B2 já; locadoras quando a lista existir) |
+| Grupo 1 | B1 Resale, B2 Test Drive, locadoras (B5 de CNPJ ativo na `dim_customer_classification`, tipo `RENTAL_COMPANY`) | Fase 1 |
 | Grupo 2 | B5 Direct Sale, **B3 PCD, B4 Táxi** (mesmo grupo da VD) | Fase 2 |
 | Fora | Demo / Showroom, Asset / Seguradora | Não liberado por esta consulta: consultar o time BP Auto |
 
@@ -35,16 +42,39 @@ Corte da fase 1: NFs emitidas a partir de `2026-10-01` (`c_start_issuance_date`)
 ## Regras do Grupo 1 (ordem do status)
 
 1. **Já liberado** → `RELEASED`: chave consta como `RELEASED` no histórico
-   manual (`bronze_chassis_released_to_logistics`) ou o pedido do CRM já passou
-   da expedição (`To Be Received` / `Completed`).
+   manual (`bronze_chassis_released_to_logistics`) → `LEGACY_HISTORY`;
+   liberação registrada no app (`manual_release` ativa) → `APP`; ou o BP já
+   liberou no CRM: sub-status `Pending Factory Release`, ou `order_status`
+   `To Be Received` / `Completed` → `CRM_STATUS`.
 2. **Prazo > 30 dias** → senão `REVIEW_PAYMENT_TERM`. Dias pela
    `dim_cond_pagamento.desc_prazo_pgto_atribuicao_bp`; quando ela traz `-`
    (98% das NFs de Revenda em 09/11/2026), o número sai do texto SAP
    "dentro de **N** dias". Sem número → revisão.
 3. **BASE do financeiro** (chassi + NF + data) → senão `WAITING_FINANCE`.
-4. **CRM** com exatamente 1 pedido e `order_sub_status = 'To Be Shipped'`
+4. **Pedido alterado no CRM** depois da foto congelada → `CRM_CHANGED`
+   (só quando o resto passou; bloqueia).
+5. **CRM** com exatamente 1 pedido e `order_sub_status = 'To Be Shipped'`
    → senão `WAITING_CRM`.
-5. Tudo ok → `READY_TO_RELEASE`.
+6. Tudo ok → `READY_TO_RELEASE`.
+
+Prazo para locadora: chave `c_rental_requires_payment_term` (1 = vale, padrão
+até o supervisor confirmar).
+
+### Alertas (12/11/2026)
+
+- `control_alert`: liberado no CRM sem a NF na BASE do Financeiro ou com prazo
+  que não passa.
+- `crm_change_alert`: diferença entre o CRM atual e a foto congelada
+  (`crm_snapshot_*`, gravada na 1ª execução em que a NF está pronta ou
+  liberada): pedido, modelo, versão, cores, status que voltou e status de
+  exceção. Some só com `sp_accept_vehicle_release_crm_change`.
+- Mudança de alerta sem mudança de status gera evento `ALERT_CHANGED`.
+
+Simulação em 12/11/2026 (tabelas temporárias com o mesmo nome, só na conexão
+do teste, nada gravado): 10,9 s; 2.134 NFs de `WAITING_CRM` para `RELEASED`
+(Pending Factory Release), 1.932 NFs de locadora, 12 `control_alert`; 2ª
+execução sem eventos; pedido trocado → `CRM_CHANGED`; aceite → volta a
+`READY_TO_RELEASE`; liberação manual → `RELEASED` / `APP`.
 
 `release_status_reason` lista todas as regras que falharam.
 

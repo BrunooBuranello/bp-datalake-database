@@ -33,3 +33,11 @@ WHERE classification_type = 'RENTAL_COMPANY'
   AND is_active = 'YES'
 ORDER BY customer_name;
 ```
+
+## Uso
+
+- `sp_sync_bronze_vehicle_release` (Liberação de Veículos): Venda Direta (B5)
+  com sold-to CNPJ ativo como `RENTAL_COMPANY` entra no Grupo 1 (mesmas regras
+  da Revenda). Casamento pelo **CNPJ completo**.
+- Carga inicial em 12/11/2026: 8 CNPJs de 5 locadoras, do e-mail do
+  Financeiro (dígitos verificadores conferidos antes do INSERT).
