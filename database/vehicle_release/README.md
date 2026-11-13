@@ -121,3 +121,18 @@ a procedure marca essas NFs com `crm_match_count > 1` e manda para revisão.
   do dia não deve ser feita com ele.
 - D+1 em dias úteis (feriados + fins de semana) é calculado no app, com o
   calendário de `demo_notifications/domain/send_calendar.py`.
+
+## Lote de liberação com e-mail (13/11/2026, ADR-009 do app)
+
+| Arquivo | Objeto | Papel |
+|---|---|---|
+| `11_create_bronze_vehicle_release_batch.sql` | `bronze_vehicle_release_batch` / `_batch_item` | Lote de "Registrar liberação" e a foto de cada NF (BASE, prazo, CRM) |
+| `12_sp_register_vehicle_release_batch.sql` | `sp_register_vehicle_release_batch` | Grava o lote com todas as NFs prontas; em PRODUCTION também libera |
+| `13_sp_set_vehicle_release_batch_email.sql` | `sp_set_vehicle_release_batch_email` | Resultado do e-mail (SENT/ERROR) |
+
+Deploy: **recriar 06 → 11 → 12 → 13**. A 06 deixa de olhar a coluna L
+("Check cancelado"), que o Financeiro parou de preencher.
+
+Ensaio em 13/11/2026 (tabelas temporárias, nada gravado): 24 NFs prontas,
+lote TEST com 24 itens (24 com BASE e pedido do CRM) e nenhum status mudou;
+lote PRODUCTION liberou as 24 (`RELEASED` / `APP`, 24 eventos `BATCH_RELEASE`).

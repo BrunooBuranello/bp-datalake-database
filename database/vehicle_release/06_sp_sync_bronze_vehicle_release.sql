@@ -48,9 +48,8 @@
 --     <= 30 -> REVIEW_PAYMENT_TERM. Para locadora vale só se
 --     c_rental_requires_payment_term = 1 (aguardando o supervisor).
 --  2. Chave chassi + NF + data consta na bronze_finance_credit_base
---     -> senão WAITING_FINANCE. Linhas com a coluna L "Check
---     cancelado" preenchida (texto diferente de "-") são ignoradas:
---     marcam a própria NF como cancelada (Financeiro, 11/11/2026).
+--     -> senão WAITING_FINANCE. (A coluna L "Check cancelado" deixou
+--     de ser preenchida pelo Financeiro e saiu da regra em 13/11/2026.)
 --  3. Pedido alterado no CRM depois da foto congelada -> CRM_CHANGED
 --     (só quando todo o resto passou; bloqueia a liberação).
 --  4. CRM: chassi + NF + data acha exatamente 1 pedido e o
@@ -320,8 +319,6 @@ BEGIN
             END AS issuance_date
         FROM bp_datalake.bronze_finance_credit_base AS f
         WHERE CHAR_LENGTH(TRIM(f.chassis)) = 17
-          -- Coluna L preenchida = NF cancelada pelo Financeiro: não conta.
-          AND COALESCE(NULLIF(TRIM(f.cancellation_check), ''), '-') = '-'
           AND TRIM(f.invoice_number) REGEXP '^[0-9]{1,9}$'
     ) AS k
     WHERE k.issuance_date IS NOT NULL;
