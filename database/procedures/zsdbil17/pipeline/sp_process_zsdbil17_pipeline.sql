@@ -186,6 +186,38 @@ BEGIN
 
     CALL bp_datalake.sp_silver_z17_vehicle_type();
 
+
+    /*
+    =========================================================
+    9.1 CLASSIFICAÇÃO DE MATERIAIS (dim_material_classification)
+    =========================================================
+
+    Atualiza o tipo de cada material (CAR, PART, BUS_TRUCK,
+    OTHER) a partir do Material Code, da exclusão, do grupo do
+    SAP e das decisões manuais. Precisa rodar antes da regra de
+    chassi (ADR-016 do sap_service).
+
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_refresh_dim_material_classification();
+
+
+    /*
+    =========================================================
+    9.2 SILVER - RESOLUÇÃO DO CHASSI
+    =========================================================
+
+    Decide, linha a linha, de onde vem o chassi (SAP, "Chassi do
+    Veiculo" ou "Customer Reference") e manda para
+    silver_zsdbil17_chassis_fallback o que nenhuma regra resolve.
+    Roda antes da Gold, que só aceita linha com chassi.
+
+    =========================================================
+    */
+
+    CALL bp_datalake.sp_silver_z17_chassis_resolution();
+
     /*
     =========================================================
     9. GOLD - LOAD BASE

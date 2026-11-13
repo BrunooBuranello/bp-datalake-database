@@ -278,6 +278,49 @@ auditoria (ADR-012 e ADR-014 de `sap_service/docs/DECISIONS.md`). Nenhuma
 procedure lê esta tabela; ela serve para conferência e reprocessamento.
 Aplicar o `01` **antes** do deploy do app.
 
+## Resolução do chassi na Silver e fallback (Silver 08–10)
+
+O SAP às vezes manda a NF de carro com `Chassis / Serial Number` vazio e o
+chassi em outra coluna da mesma linha (`Chassi do Veiculo` ou
+`Customer Reference`). A Gold só aceita linha com chassi, então esses carros
+sumiam do faturamento sem aviso (ADR-016 de `sap_service/docs/DECISIONS.md`).
+
+- `database/material_classification/`: `dim_material_classification`, o tipo de
+  cada material (`CAR`, `PART`, `BUS_TRUCK`, `OTHER`), montado do Material Code,
+  da exclusão, do grupo do SAP (`B1` = peça) e de decisões manuais
+  (`MANUAL` / `SEED_*`, nunca sobrescritas). `sp_refresh_dim_material_classification`
+  roda na pipeline (passo 9.1).
+- `silver/10_sp_silver_z17_chassis_resolution.sql` (passo 9.2): grava em cada
+  linha `chassis_rule` (a regra que decidiu) e, quando o chassi foi preenchido,
+  `chassis_source` (`SAP`, `CHASSI_DO_VEICULO` ou `CUSTOMER_REFERENCE`). Só
+  preenche chassi de material **carro** em CFOP de venda e com VIN válido de 17
+  caracteres. NF só de imposto (sem ordem de venda, sem VF01, valor do item 0)
+  vira `TAX_COMPLEMENT`. A Bronze não muda.
+- `silver_zsdbil17_chassis_fallback`: só os casos **abertos**
+  (`chassis_rule = FALLBACK_*`), com `first_seen_at` fixo e `last_seen_at`
+  atualizado a cada pipeline; o caso resolvido sai sozinho.
+
+Ordem de deploy (fila SAP vazia, uma vez):
+
+1. `material_classification/01_create_dim_material_classification.sql`
+2. `silver/08_alter_silver_zsdbil17_add_chassis_resolution.sql`
+3. `silver/09_create_silver_zsdbil17_chassis_fallback.sql`
+4. `material_classification/02_sp_refresh_dim_material_classification.sql`
+5. `material_classification/03_seed_dim_material_classification_20261113.sql`
+6. `silver/10_sp_silver_z17_chassis_resolution.sql`
+7. `gold/11_alter_gold_zsdbil17_add_delivery_note.sql` e recriar
+   `gold/02_sp_gold_z17_load_base.sql` (remessa `delivery_note_number_picking`
+   na Gold)
+8. recriar `pipeline/sp_process_zsdbil17_pipeline.sql`
+9. rodar a pipeline uma vez fora do horário: a primeira execução da procedure
+   10 classifica o histórico inteiro (~1,5 milhão de linhas)
+
+Rollback: recriar a pipeline sem os passos 9.1 e 9.2, desfazer só os chassis
+preenchidos pela regra (`UPDATE ... SET chassis_serial_number = NULL WHERE
+chassis_source IN ('CHASSI_DO_VEICULO', 'CUSTOMER_REFERENCE')`) e rodar a
+pipeline para a Gold voltar ao estado anterior. As tabelas e colunas novas
+podem ficar.
+
 ## Silver
 
 Arquivo:
