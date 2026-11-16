@@ -124,6 +124,7 @@ BEGIN
         status_since = v_now,
         release_status = 'RELEASED',
         released_source = 'APP',
+        release_date = DATE(v_now),
         release_status_reason = LEFT(CONCAT('Liberado no app por ', TRIM(p_released_by), ': ', v_reason), 500)
     WHERE chassis_serial_number = p_chassis_serial_number
       AND invoice_number = p_invoice_number

@@ -221,6 +221,7 @@ BEGIN
             v.status_since = v_now,
             v.release_status = 'RELEASED',
             v.released_source = 'APP',
+            v.release_date = DATE(v_now),
             v.release_status_reason = LEFT(CONCAT('Liberado no app em lote nº ', p_batch_id, ' por ', v_user), 500);
 
     END IF;

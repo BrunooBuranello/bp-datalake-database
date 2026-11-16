@@ -329,19 +329,29 @@ BEGIN
         chassis VARCHAR(17) NOT NULL,
         invoice_number VARCHAR(9) NOT NULL,
         issuance_date DATE NOT NULL,
+        release_date DATE NULL,
         PRIMARY KEY (chassis, invoice_number, issuance_date)
     );
 
-    INSERT IGNORE INTO tmp_vr_legacy_released
+    -- data_de_liberacao vem como texto AAAA-MM-DD (com ou sem hora); texto
+    -- fora desse formato fica sem data. Chave repetida: a 1ª liberação.
+    INSERT INTO tmp_vr_legacy_released
     SELECT
         UPPER(TRIM(l.chassi)),
         LPAD(TRIM(l.nf), 9, '0'),
-        l.issuance_date
+        l.issuance_date,
+        MIN(
+            CASE
+                WHEN TRIM(l.data_de_liberacao) REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                    THEN STR_TO_DATE(LEFT(TRIM(l.data_de_liberacao), 10), '%Y-%m-%d')
+            END
+        )
     FROM bp_datalake.bronze_chassis_released_to_logistics AS l
     WHERE l.status = 'RELEASED'
       AND l.issuance_date >= c_start_issuance_date
       AND CHAR_LENGTH(TRIM(l.chassi)) = 17
-      AND TRIM(l.nf) REGEXP '^[0-9]{1,9}$';
+      AND TRIM(l.nf) REGEXP '^[0-9]{1,9}$'
+    GROUP BY UPPER(TRIM(l.chassi)), LPAD(TRIM(l.nf), 9, '0'), l.issuance_date;
 
     -- 04.4 Locadoras: CNPJ completo ativo (lista do Financeiro).
     DROP TEMPORARY TABLE IF EXISTS tmp_vr_rental;
@@ -365,6 +375,7 @@ BEGIN
         plant_code VARCHAR(10) NOT NULL,
         released_by VARCHAR(150) NOT NULL,
         release_reason VARCHAR(500) NOT NULL,
+        released_at DATETIME NOT NULL,
         PRIMARY KEY (chassis, invoice_number, issuance_date, plant_code)
     );
 
@@ -375,7 +386,8 @@ BEGIN
         m.issuance_date,
         m.plant_code,
         m.released_by,
-        m.release_reason
+        m.release_reason,
+        m.released_at
     FROM bp_datalake.bronze_vehicle_release_manual_release AS m
     WHERE m.is_active = 'YES';
 
@@ -434,6 +446,8 @@ BEGIN
         IF(m.chassis IS NOT NULL, 'YES', 'NO') AS manual_released,
         m.released_by AS manual_released_by,
         m.release_reason AS manual_release_reason,
+        l.release_date AS legacy_release_date,
+        m.released_at AS manual_released_at,
 
         COALESCE(c.match_count, 0) AS crm_match_count,
         c.order_no AS crm_order_no,
@@ -531,6 +545,13 @@ BEGIN
             WHEN x.manual_released = 'YES' THEN 'APP'
             WHEN x.crm_released = 'YES' THEN 'CRM_STATUS'
         END AS released_source,
+
+        -- Data da liberação manual (planilha antiga ou app). O CRM não grava
+        -- quando o pedido virou Pending Factory Release: fica vazia (ADR-010).
+        CASE
+            WHEN x.legacy_released = 'YES' THEN x.legacy_release_date
+            WHEN x.manual_released = 'YES' THEN DATE(x.manual_released_at)
+        END AS release_date,
 
         CASE
             WHEN x.legacy_released = 'YES'
@@ -810,7 +831,7 @@ BEGIN
         crm_snapshot_vehicle_model_code, crm_snapshot_config_no,
         crm_snapshot_exterior_color_code, crm_snapshot_interior_color_code,
         crm_snapshot_at, crm_change_alert,
-        release_status, release_status_reason, released_source, control_alert, in_gold,
+        release_status, release_status_reason, released_source, release_date, control_alert, in_gold,
         status_since, first_seen_at, last_run_id
     )
     SELECT
@@ -829,7 +850,7 @@ BEGIN
         s.snapshot_vehicle_model_code, s.snapshot_config_no,
         s.snapshot_exterior_color_code, s.snapshot_interior_color_code,
         s.snapshot_at, s.crm_change_alert,
-        s.release_status, s.release_status_reason, s.released_source, s.control_alert, 'YES',
+        s.release_status, s.release_status_reason, s.released_source, s.release_date, s.control_alert, 'YES',
         v_now, v_now, p_run_id
     FROM tmp_vr_final AS s
     ON DUPLICATE KEY UPDATE
@@ -879,6 +900,7 @@ BEGIN
         release_status = s.release_status,
         release_status_reason = s.release_status_reason,
         released_source = s.released_source,
+        release_date = s.release_date,
         control_alert = s.control_alert,
         in_gold = 'YES',
         last_run_id = p_run_id;

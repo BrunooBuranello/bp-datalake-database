@@ -136,3 +136,16 @@ Deploy: **recriar 06 → 11 → 12 → 13**. A 06 deixa de olhar a coluna L
 Ensaio em 13/11/2026 (tabelas temporárias, nada gravado): 24 NFs prontas,
 lote TEST com 24 itens (24 com BASE e pedido do CRM) e nenhum status mudou;
 lote PRODUCTION liberou as 24 (`RELEASED` / `APP`, 24 eventos `BATCH_RELEASE`).
+
+## VON e data de liberação (16/11/2026, ADR-010 do app)
+
+| Arquivo | Objeto | Papel |
+|---|---|---|
+| `14_alter_vehicle_release_add_release_date.sql` | `bronze_vehicle_release.release_date` | Data da liberação manual (planilha antiga ou app); vazia quando liberado no CRM |
+
+Deploy: **14 → recriar 06, 09 e 12 → CALL da sync**. A 06 lê `data_de_liberacao`
+(texto AAAA-MM-DD) do histórico antigo e `released_at` das liberações do app.
+
+Ensaio em 16/11/2026 (tabelas temporárias, nada gravado): 20.127 das 21.918
+NFs do controle antigo com data; liberado no CRM sem data; nenhuma NF não
+liberada com data; 2ª execução sem eventos.
