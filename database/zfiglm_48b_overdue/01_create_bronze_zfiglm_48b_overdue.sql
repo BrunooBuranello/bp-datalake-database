@@ -12,7 +12,11 @@
 -- Guardar a posição de NFs vencidas (overdue) por data-base, fiel ao
 -- SAP, para consulta e para futuras camadas Silver/Gold.
 --
--- ESTRATÉGIA:
+-- ATENÇÃO (18/11/2026, ADR-036): a estratégia abaixo foi SUBSTITUÍDA pela
+-- reconciliação via staging (02_create_stg..., 03_alter..., 04_sp_...).
+-- Este arquivo fica como a criação original da tabela.
+--
+-- ESTRATÉGIA ORIGINAL (ADR-034):
 -- - APPEND a cada execução (sem DELETE nem TRUNCATE), a pedido do
 --   Bruno (17/11/2026). Roda de hora em hora no lote "SAP Jobs" e
 --   pelo botão da tela Transações SAP.
