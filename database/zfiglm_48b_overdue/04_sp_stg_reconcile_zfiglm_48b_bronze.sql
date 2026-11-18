@@ -100,7 +100,7 @@ BEGIN
 
 
     -- ------------------------------------------------------------------
-    -- 2. ERRO: ROLLBACK + LOG FAILED + devolve o erro original
+    -- 2. ERRO: ROLLBACK + LOG ERROR + devolve o erro original
     -- ------------------------------------------------------------------
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -126,7 +126,7 @@ BEGIN
             'sp_stg_reconcile_zfiglm_48b_bronze',
             'stg_zfiglm_48b_overdue',
             'bronze_zfiglm_48b_overdue',
-            'FAILED',
+            'ERROR',
             CURRENT_USER(),
             v_started_at,
             v_finished_at,
