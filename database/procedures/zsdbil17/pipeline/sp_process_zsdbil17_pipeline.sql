@@ -6,6 +6,10 @@ CREATE PROCEDURE bp_datalake.sp_process_zsdbil17_pipeline()
 BEGIN
 
     DECLARE v_pipeline_execution_id BIGINT DEFAULT NULL;
+
+    -- Linha do etl_execution_log da etapa em andamento, para as
+    -- etapas sem log próprio (ver "TEMPO DAS ETAPAS" abaixo).
+    DECLARE v_step_execution_id BIGINT DEFAULT NULL;
     DECLARE v_started_at DATETIME(6);
     DECLARE v_finished_at DATETIME(6);
 
@@ -49,6 +53,27 @@ BEGIN
 
         END IF;
 
+        -- Etapa sem log próprio que estava rodando: marca ERROR.
+        -- Se o Python desfizer a transação (rollback), ele mesmo
+        -- marca de novo (_mark_pipeline_error, z17.py).
+        IF v_step_execution_id IS NOT NULL THEN
+
+            UPDATE bp_datalake.etl_execution_log
+            SET
+                execution_status = 'ERROR',
+                finished_at = v_finished_at,
+                execution_duration_seconds =
+                    TIMESTAMPDIFF(
+                        MICROSECOND,
+                        started_at,
+                        v_finished_at
+                    ) / 1000000,
+                error_code = v_error_code,
+                error_message = v_error_message
+            WHERE id_execution = v_step_execution_id;
+
+        END IF;
+
         RESIGNAL;
 
     END;
@@ -89,6 +114,31 @@ BEGIN
     );
 
     SET v_pipeline_execution_id = LAST_INSERT_ID();
+
+
+    /*
+    =========================================================
+    TEMPO DAS ETAPAS (23/11/2026, ADR-050 do sap_service)
+    =========================================================
+
+    Cinco etapas não gravam nada no etl_execution_log:
+        sp_silver_z17_sales_type
+        sp_silver_z17_vehicle_type
+        sp_refresh_dim_material_classification
+        sp_gold_z17_sales_type
+        sp_gold_z17_enrich
+
+    A pipeline grava por elas uma linha RUNNING antes do CALL e
+    SUCCESS depois (audit_details.logged_by =
+    'sp_process_zsdbil17_pipeline'), para medir cada uma. Sem isso
+    ~40% do tempo da pipeline não aparecia em lugar nenhum.
+
+    O registro é feito aqui, com INSERT/UPDATE e sem CALL de
+    procedure auxiliar: o monitor "Procedure N/T" do app conta
+    os CALL desta procedure, e um CALL a mais apareceria como
+    etapa.
+    =========================================================
+    */
 
 
     /*
@@ -156,7 +206,29 @@ BEGIN
     =========================================================
     */
 
+    INSERT INTO bp_datalake.etl_execution_log (
+        procedure_name, source_table, target_table, execution_status,
+        executed_by, started_at, created_at, audit_details
+    )
+    VALUES (
+        'sp_silver_z17_sales_type', 'silver_zsdbil17_outbound_movements', 'silver_zsdbil17_outbound_movements', 'RUNNING',
+        CURRENT_USER(), NOW(6), NOW(6),
+        JSON_OBJECT('logged_by', 'sp_process_zsdbil17_pipeline')
+    );
+
+    SET v_step_execution_id = LAST_INSERT_ID();
+
     CALL bp_datalake.sp_silver_z17_sales_type();
+
+    UPDATE bp_datalake.etl_execution_log
+    SET
+        execution_status = 'SUCCESS',
+        finished_at = NOW(6),
+        execution_duration_seconds =
+            TIMESTAMPDIFF(MICROSECOND, started_at, NOW(6)) / 1000000
+    WHERE id_execution = v_step_execution_id;
+
+    SET v_step_execution_id = NULL;
 
     /*
     =========================================================
@@ -184,7 +256,29 @@ BEGIN
     =========================================================
     */
 
+    INSERT INTO bp_datalake.etl_execution_log (
+        procedure_name, source_table, target_table, execution_status,
+        executed_by, started_at, created_at, audit_details
+    )
+    VALUES (
+        'sp_silver_z17_vehicle_type', 'bronze_vehicle_material_code', 'silver_zsdbil17_outbound_movements', 'RUNNING',
+        CURRENT_USER(), NOW(6), NOW(6),
+        JSON_OBJECT('logged_by', 'sp_process_zsdbil17_pipeline')
+    );
+
+    SET v_step_execution_id = LAST_INSERT_ID();
+
     CALL bp_datalake.sp_silver_z17_vehicle_type();
+
+    UPDATE bp_datalake.etl_execution_log
+    SET
+        execution_status = 'SUCCESS',
+        finished_at = NOW(6),
+        execution_duration_seconds =
+            TIMESTAMPDIFF(MICROSECOND, started_at, NOW(6)) / 1000000
+    WHERE id_execution = v_step_execution_id;
+
+    SET v_step_execution_id = NULL;
 
 
     /*
@@ -200,7 +294,29 @@ BEGIN
     =========================================================
     */
 
+    INSERT INTO bp_datalake.etl_execution_log (
+        procedure_name, source_table, target_table, execution_status,
+        executed_by, started_at, created_at, audit_details
+    )
+    VALUES (
+        'sp_refresh_dim_material_classification', 'bronze_vehicle_material_code', 'dim_material_classification', 'RUNNING',
+        CURRENT_USER(), NOW(6), NOW(6),
+        JSON_OBJECT('logged_by', 'sp_process_zsdbil17_pipeline')
+    );
+
+    SET v_step_execution_id = LAST_INSERT_ID();
+
     CALL bp_datalake.sp_refresh_dim_material_classification();
+
+    UPDATE bp_datalake.etl_execution_log
+    SET
+        execution_status = 'SUCCESS',
+        finished_at = NOW(6),
+        execution_duration_seconds =
+            TIMESTAMPDIFF(MICROSECOND, started_at, NOW(6)) / 1000000
+    WHERE id_execution = v_step_execution_id;
+
+    SET v_step_execution_id = NULL;
 
 
     /*
@@ -233,7 +349,29 @@ BEGIN
     =========================================================
     */
 
+    INSERT INTO bp_datalake.etl_execution_log (
+        procedure_name, source_table, target_table, execution_status,
+        executed_by, started_at, created_at, audit_details
+    )
+    VALUES (
+        'sp_gold_z17_sales_type', 'dim_sales_order_type', 'gold_zsdbil17_faturamento', 'RUNNING',
+        CURRENT_USER(), NOW(6), NOW(6),
+        JSON_OBJECT('logged_by', 'sp_process_zsdbil17_pipeline')
+    );
+
+    SET v_step_execution_id = LAST_INSERT_ID();
+
     CALL bp_datalake.sp_gold_z17_sales_type();
+
+    UPDATE bp_datalake.etl_execution_log
+    SET
+        execution_status = 'SUCCESS',
+        finished_at = NOW(6),
+        execution_duration_seconds =
+            TIMESTAMPDIFF(MICROSECOND, started_at, NOW(6)) / 1000000
+    WHERE id_execution = v_step_execution_id;
+
+    SET v_step_execution_id = NULL;
 
 
     /*
@@ -242,7 +380,29 @@ BEGIN
     =========================================================
     */
 
+    INSERT INTO bp_datalake.etl_execution_log (
+        procedure_name, source_table, target_table, execution_status,
+        executed_by, started_at, created_at, audit_details
+    )
+    VALUES (
+        'sp_gold_z17_enrich', 'mapping_dealer_expansion', 'gold_zsdbil17_faturamento', 'RUNNING',
+        CURRENT_USER(), NOW(6), NOW(6),
+        JSON_OBJECT('logged_by', 'sp_process_zsdbil17_pipeline')
+    );
+
+    SET v_step_execution_id = LAST_INSERT_ID();
+
     CALL bp_datalake.sp_gold_z17_enrich();
+
+    UPDATE bp_datalake.etl_execution_log
+    SET
+        execution_status = 'SUCCESS',
+        finished_at = NOW(6),
+        execution_duration_seconds =
+            TIMESTAMPDIFF(MICROSECOND, started_at, NOW(6)) / 1000000
+    WHERE id_execution = v_step_execution_id;
+
+    SET v_step_execution_id = NULL;
 
 
     /*
@@ -264,6 +424,11 @@ BEGIN
 
     A procedure Legacy é APPEND ONLY e não altera registros
     CURRENT já existentes na Gold.
+
+    Desde 23/11/2026 (ADR-050) o Legacy fica na Gold entre as
+    execuções: o load_base apaga só as linhas atuais, e esta
+    etapa só devolve o Legacy dos chassis sem linha na Gold
+    (numa hora normal, nenhum).
 
     =========================================================
     */

@@ -21,6 +21,10 @@
 --
 -- Sem correspondência válida, utiliza UNKNOWN.
 -- Considera registros atuais e Legacy.
+--
+-- Desempenho: o Material Code vira uma temporária com
+-- PRIMARY KEY no código (ADR-050 do sap_service, 23/11/2026);
+-- detalhes na seção 5.
 -- ============================================================
 
 DELIMITER $$
@@ -58,6 +62,8 @@ BEGIN
             v_error_message = MESSAGE_TEXT;
 
         ROLLBACK;
+
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_model_map;
 
         SET v_finished_at = NOW(6);
 
@@ -141,7 +147,97 @@ BEGIN
 
 
     -- ========================================================
-    -- 5. REGISTROS COM MODELO IDENTIFICADO
+    -- 5. MAPA MATERIAL -> MODELO (TEMPORÁRIA COM ÍNDICE)
+    -- ========================================================
+    /*
+    Desempenho (23/11/2026, ADR-050 do sap_service):
+    a versão anterior juntava a Gold com uma subconsulta
+    ranqueada usando CONVERT(TRIM(CAST(...))) dos dois lados.
+    Com função na coluna o MySQL não usa índice e compara cada
+    linha da Gold (~435 mil) com cada material (~1 mil):
+    3 a 6 minutos por execução.
+
+    Agora o Material Code vira uma temporária pequena, já
+    convertida para a collation da Gold e com PRIMARY KEY no
+    código. A Gold é lida uma vez e cada linha acha o seu
+    material pela chave (g.material já é gravado com TRIM pelo
+    load_base e pelo Legacy).
+
+    Mesmo resultado de antes:
+    - uma linha por código (cod_sap é UNIQUE na Bronze; o
+      ROW_NUMBER mantém a mesma prioridade: modelo preenchido
+      primeiro, depois ordem alfabética do modelo);
+    - modelo vazio vira NULL aqui e UNKNOWN no UPDATE;
+    - comparação case-insensitive (0900_ai_ci), como a
+      unicode_ci usada antes.
+    */
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_model_map;
+
+    CREATE TEMPORARY TABLE tmp_z17_model_map (
+        cod_sap VARCHAR(100)
+            CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+        model_simplified VARCHAR(255)
+            CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
+        PRIMARY KEY (cod_sap)
+    ) ENGINE = InnoDB;
+
+    INSERT INTO tmp_z17_model_map (
+        cod_sap,
+        model_simplified
+    )
+    SELECT
+        ranked.cod_key,
+        ranked.model_simplified
+
+    FROM (
+
+        SELECT
+            CONVERT(
+                TRIM(CAST(mm.cod_sap AS CHAR))
+                USING utf8mb4
+            ) COLLATE utf8mb4_0900_ai_ci AS cod_key,
+
+            NULLIF(TRIM(mm.model_simplified), '') AS model_simplified,
+
+            -- Partição pela chave já convertida: garante uma
+            -- linha por valor da PRIMARY KEY da temporária.
+            ROW_NUMBER() OVER (
+
+                PARTITION BY
+                    CONVERT(
+                        TRIM(CAST(mm.cod_sap AS CHAR))
+                        USING utf8mb4
+                    ) COLLATE utf8mb4_0900_ai_ci
+
+                ORDER BY
+                    CASE
+                        WHEN NULLIF(
+                            TRIM(mm.model_simplified), ''
+                        ) IS NOT NULL
+                            THEN 1
+                        ELSE 2
+                    END,
+
+                    COALESCE(
+                        TRIM(mm.model_simplified), ''
+                    )
+
+            ) AS rn
+
+        FROM bp_datalake.bronze_vehicle_material_code AS mm
+
+        WHERE NULLIF(
+            TRIM(CAST(mm.cod_sap AS CHAR)), ''
+        ) IS NOT NULL
+
+    ) AS ranked
+
+    WHERE ranked.rn = 1;
+
+
+    -- ========================================================
+    -- 6. REGISTROS COM MODELO IDENTIFICADO
     -- ========================================================
 
     SELECT COUNT(*)
@@ -149,31 +245,10 @@ BEGIN
 
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
-    WHERE EXISTS (
+    INNER JOIN tmp_z17_model_map AS mm
+        ON mm.cod_sap = g.material
 
-        SELECT 1
-        FROM bp_datalake.bronze_vehicle_material_code AS mm
-
-        WHERE NULLIF(
-            TRIM(CAST(mm.cod_sap AS CHAR)), ''
-        ) IS NOT NULL
-
-        AND
-            CONVERT(
-                TRIM(CAST(mm.cod_sap AS CHAR))
-                USING utf8mb4
-            ) COLLATE utf8mb4_unicode_ci
-            =
-            CONVERT(
-                TRIM(CAST(g.material AS CHAR))
-                USING utf8mb4
-            ) COLLATE utf8mb4_unicode_ci
-
-        AND NULLIF(
-            TRIM(mm.model_simplified), ''
-        ) IS NOT NULL
-
-    );
+    WHERE mm.model_simplified IS NOT NULL;
 
 
     SET v_unmatched_rows =
@@ -181,120 +256,41 @@ BEGIN
 
 
     -- ========================================================
-    -- 6. ENRIQUECIMENTO DO MODELO
+    -- 7. ENRIQUECIMENTO DO MODELO
     -- ========================================================
     /*
-    Busca o modelo atualizado na Bronze.
-
-    Se houver mais de um cod_sap, seleciona apenas
-    um registro, priorizando modelo preenchido.
-
-    Atualiza a Gold somente quando o valor for diferente.
-
-    A comparação usa a mesma collation nos dois lados.
+    Atualiza a Gold somente quando o valor for diferente
+    (inclui NULL -> UNKNOWN). Sem modelo: UNKNOWN.
     */
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
-    LEFT JOIN (
-
-        SELECT
-            ranked.cod_sap,
-            ranked.model_simplified
-
-        FROM (
-
-            SELECT
-                mm.cod_sap,
-                mm.model_simplified,
-
-                ROW_NUMBER() OVER (
-
-                    PARTITION BY
-                        TRIM(CAST(mm.cod_sap AS CHAR))
-
-                    ORDER BY
-                        CASE
-                            WHEN NULLIF(
-                                TRIM(mm.model_simplified), ''
-                            ) IS NOT NULL
-                                THEN 1
-                            ELSE 2
-                        END,
-
-                        COALESCE(
-                            TRIM(mm.model_simplified), ''
-                        )
-
-                ) AS rn
-
-            FROM bp_datalake.bronze_vehicle_material_code AS mm
-
-            WHERE NULLIF(
-                TRIM(CAST(mm.cod_sap AS CHAR)), ''
-            ) IS NOT NULL
-
-        ) AS ranked
-
-        WHERE ranked.rn = 1
-
-    ) AS mm
-
-        ON
-            CONVERT(
-                TRIM(CAST(g.material AS CHAR))
-                USING utf8mb4
-            ) COLLATE utf8mb4_unicode_ci
-            =
-            CONVERT(
-                TRIM(CAST(mm.cod_sap AS CHAR))
-                USING utf8mb4
-            ) COLLATE utf8mb4_unicode_ci
-
+    LEFT JOIN tmp_z17_model_map AS mm
+        ON mm.cod_sap = g.material
 
     SET
         g.model_simplified =
-            COALESCE(
-                NULLIF(TRIM(mm.model_simplified), ''),
-                'UNKNOWN'
-            )
-
-
-    -- ========================================================
-    -- 6.1 ATUALIZA SOMENTE VALORES DIFERENTES
-    -- ========================================================
+            COALESCE(mm.model_simplified, 'UNKNOWN')
 
     WHERE NOT (
-
-        CONVERT(
-            g.model_simplified USING utf8mb4
-        ) COLLATE utf8mb4_unicode_ci
-
-        <=>
-
-        CONVERT(
-            COALESCE(
-                NULLIF(TRIM(mm.model_simplified), ''),
-                'UNKNOWN'
-            )
-            USING utf8mb4
-        ) COLLATE utf8mb4_unicode_ci
-
+        g.model_simplified <=> COALESCE(mm.model_simplified, 'UNKNOWN')
     );
 
 
     SET v_rows_updated = ROW_COUNT();
 
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_model_map;
+
 
     -- ========================================================
-    -- 7. FINALIZAÇÃO
+    -- 8. FINALIZAÇÃO
     -- ========================================================
 
     SET v_finished_at = NOW(6);
 
 
     -- ========================================================
-    -- 8. LOG DE SUCESSO
+    -- 9. LOG DE SUCESSO
     -- ========================================================
 
     INSERT INTO bp_datalake.etl_execution_log (
@@ -338,14 +334,14 @@ BEGIN
 
 
     -- ========================================================
-    -- 9. CONFIRMA TRANSAÇÃO
+    -- 10. CONFIRMA TRANSAÇÃO
     -- ========================================================
 
     COMMIT;
 
 
     -- ========================================================
-    -- 10. RESULTADO DA EXECUÇÃO
+    -- 11. RESULTADO DA EXECUÇÃO
     -- ========================================================
 
     SELECT

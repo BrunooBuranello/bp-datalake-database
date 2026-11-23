@@ -15,7 +15,9 @@
 -- sp_gold_z17_load_base:
 -- 1. Independência: load_base e append_legacy não mudam. Para
 --    desligar o paliativo basta remover o CALL da pipeline; a
---    próxima carga recria a Gold inteira sem exclusão.
+--    próxima carga recria as linhas atuais e o append_legacy
+--    devolve o Legacy apagado (ADR-050 do sap_service: desde
+--    23/11/2026 o Legacy fica na Gold), sem exclusão.
 -- 2. Sem fallback: se o filtro ficasse antes do ranking, a NF
 --    anterior do chassi viraria a "mais recente" e entraria; se
 --    ficasse no load_base, o append_legacy (NOT EXISTS contra a

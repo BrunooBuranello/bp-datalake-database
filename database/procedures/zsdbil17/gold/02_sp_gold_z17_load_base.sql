@@ -111,11 +111,27 @@ NF200 é o registro não-CBY mais recente e segue para validação.
 ESTRATÉGIA ATUAL
 ============================================================
 
-FULL REFRESH TRANSACIONAL.
+FULL REFRESH TRANSACIONAL DAS LINHAS ATUAIS (ZSDBIL17_CURRENT).
 
-A Gold é apagada e recriada a cada execução.
-
+As linhas atuais são apagadas e recriadas a cada execução.
 DELETE é utilizado em vez de TRUNCATE para permitir ROLLBACK.
+
+O Legacy 2024/2025 NÃO é mais apagado (23/11/2026, ADR-050 do
+sap_service). Antes a Gold inteira era apagada e o Legacy
+(~218 mil linhas que não mudam) era regravado toda hora pela
+sp_gold_z17_append_legacy_2024_2025. Agora:
+
+    - esta procedure apaga só o que não é Legacy;
+    - o chassi que ganhou NF atual elegível sai do Legacy
+      antes do INSERT (1 chassi = 1 linha; o atual tem
+      prioridade, como sempre teve);
+    - a procedure do Legacy só devolve o Legacy dos chassis
+      que ficaram sem linha na Gold.
+
+O resultado final da pipeline é o mesmo de antes.
+
+Histórico: até 22/11/2026 a estratégia era "a Gold é apagada
+e recriada a cada execução".
 
 ============================================================
 */
@@ -146,6 +162,8 @@ BEGIN
     DECLARE v_selected_rows BIGINT DEFAULT 0;
     DECLARE v_rejected_rows BIGINT DEFAULT 0;
     DECLARE v_loaded_rows BIGINT DEFAULT 0;
+    DECLARE v_deleted_current_rows BIGINT DEFAULT 0;
+    DECLARE v_legacy_replaced_rows BIGINT DEFAULT 0;
 
     DECLARE v_sqlstate CHAR(5) DEFAULT NULL;
     DECLARE v_mysql_errno INT DEFAULT NULL;
@@ -199,6 +217,11 @@ BEGIN
                 ),
 
                 error_message = v_error_message,
+
+                audit_details = JSON_OBJECT(
+                    'deleted_current_rows', v_deleted_current_rows,
+                    'legacy_replaced_rows', v_legacy_replaced_rows
+                ),
 
                 execution_duration_seconds =
                     TIMESTAMPDIFF(
@@ -454,12 +477,55 @@ BEGIN
 
     /*
     ============================================================
-    11. LIMPEZA DA GOLD
+    11. LIMPEZA DA GOLD (TUDO, MENOS O LEGACY)
     ============================================================
+
+    O Legacy 2024/2025 fica (ADR-050). <=> trata NULL: qualquer
+    linha que não seja Legacy é recriada, como antes.
     */
 
     DELETE
-    FROM bp_datalake.gold_zsdbil17_faturamento;
+    FROM bp_datalake.gold_zsdbil17_faturamento
+    WHERE NOT (record_source <=> 'LEGACY_2024_2025');
+
+    SET v_deleted_current_rows = ROW_COUNT();
+
+
+    /*
+    ============================================================
+    11.1 LEGACY CEDE LUGAR À NF ATUAL
+    ============================================================
+
+    A Gold tem PRIMARY KEY no chassi. Se um chassi do Legacy
+    ganhou uma NF atual elegível, a linha do Legacy sai antes do
+    INSERT: o atual sempre teve prioridade (antes o Legacy só
+    entrava para chassi sem linha atual).
+
+    Mesmo filtro de elegibilidade do INSERT abaixo e mesmo TRIM
+    do chassi. Parte da temporária e acha a linha da Gold pela
+    PRIMARY KEY (STRAIGHT_JOIN), sem varrer a Gold.
+    */
+
+    DELETE g
+    FROM tmp_gold_z17_latest AS t
+    STRAIGHT_JOIN bp_datalake.gold_zsdbil17_faturamento AS g
+        ON g.chassis_serial_number = TRIM(t.chassis_serial_number)
+    WHERE
+        g.record_source = 'LEGACY_2024_2025'
+
+        AND t.access_key_status = 'VALID'
+
+        AND NULLIF(
+            TRIM(t.invoice_number),
+            ''
+        ) IS NOT NULL
+
+        AND t.source_status IN (
+            'ACTIVE',
+            'UNKNOWN'
+        );
+
+    SET v_legacy_replaced_rows = ROW_COUNT();
 
 
     /*
@@ -900,6 +966,11 @@ BEGIN
 
         error_message = NULL,
 
+        audit_details = JSON_OBJECT(
+            'deleted_current_rows', v_deleted_current_rows,
+            'legacy_replaced_rows', v_legacy_replaced_rows
+        ),
+
         execution_duration_seconds =
             TIMESTAMPDIFF(
                 SECOND,
@@ -943,6 +1014,10 @@ BEGIN
         v_rejected_rows AS rejected_rows,
 
         v_loaded_rows AS loaded_rows,
+
+        v_deleted_current_rows AS deleted_current_rows,
+
+        v_legacy_replaced_rows AS legacy_replaced_rows,
 
         (
             SELECT COUNT(*)

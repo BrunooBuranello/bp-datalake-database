@@ -25,6 +25,26 @@ BEGIN
     - Não realiza deduplicação de chassis.
     - Não define sales type ou division.
     - O CRM possui prioridade sobre o fallback interno.
+    - Só atua nas linhas que não são Legacy (ADR-050 do
+      sap_service): o Legacy 2024/2025 passou a ficar na Gold
+      entre as execuções e não recebe estes enriquecimentos,
+      como antes.
+
+    Desempenho (23/11/2026, ADR-050):
+    - CRM, fallback BYD Internal e condição de pagamento viram
+      temporárias pequenas com PRIMARY KEY na chave já
+      normalizada. A Gold é lida uma vez e cada linha acha o seu
+      par pela chave, em vez de comparar cada linha da Gold com
+      cada linha da dimensão aplicando LPAD/TRIM/REGEXP dos dois
+      lados (~2 min só no dealer).
+    - Do lado da Gold a coluna entra sem CAST: CAST(... AS CHAR)
+      usa a collation da conexão que criou a procedure e
+      impediria o uso da PRIMARY KEY da temporária (ou daria
+      "Illegal mix of collations"). As colunas da Gold já são
+      texto na collation das temporárias (utf8mb4_0900_ai_ci).
+    - Mesmo resultado de antes: medido em 23/11/2026, nenhuma
+      chave do CRM ou da condição de pagamento colide depois de
+      normalizada.
 
     ============================================================
     */
@@ -61,6 +81,9 @@ BEGIN
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_dealer_map;
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_plant_fallback;
+        DROP TEMPORARY TABLE IF EXISTS tmp_z17_payment_map;
         RESIGNAL;
     END;
 
@@ -76,7 +99,8 @@ BEGIN
 
     SELECT COUNT(*)
     INTO v_source_rows
-    FROM bp_datalake.gold_zsdbil17_faturamento;
+    FROM bp_datalake.gold_zsdbil17_faturamento
+    WHERE NOT (record_source <=> 'LEGACY_2024_2025');
 
 
     /*
@@ -130,27 +154,177 @@ BEGIN
 
 
     -- ========================================================
+    -- 2.0 MAPA DO CRM (TEMPORÁRIA COM ÍNDICE)
+    -- ========================================================
+    /*
+    Uma linha por chave do CRM, já no formato da comparação
+    (LPAD(TRIM(sap_code), 10, '0')), com PRIMARY KEY.
+
+    Prioridade igual à de antes: status (DN, OLD, Pending,
+    Pátio, Yard, Store, demais) e depois loja CRM, loja e grupo.
+    A partição passou a ser pela chave normalizada (antes era
+    pelo sap_code cru): só faz diferença se dois sap_code
+    diferentes virarem a mesma chave, o que não acontece hoje
+    (0 casos em 23/11/2026). sap_code entra como último
+    desempate para o resultado ser sempre o mesmo.
+    */
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_dealer_map;
+
+    CREATE TEMPORARY TABLE tmp_z17_dealer_map (
+        dealer_key VARCHAR(10)
+            CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+        sap_code TEXT NULL,
+        store_name_crm TEXT NULL,
+        store_name TEXT NULL,
+        store_code TEXT NULL,
+        dealer_group TEXT NULL,
+        brand TEXT NULL,
+        status TEXT NULL,
+        PRIMARY KEY (dealer_key)
+    ) ENGINE = InnoDB;
+
+    INSERT INTO tmp_z17_dealer_map (
+        dealer_key,
+        sap_code,
+        store_name_crm,
+        store_name,
+        store_code,
+        dealer_group,
+        brand,
+        status
+    )
+    SELECT
+        ranked.dealer_key,
+        ranked.sap_code,
+        ranked.store_name_crm,
+        ranked.store_name,
+        ranked.store_code,
+        ranked.dealer_group,
+        ranked.brand,
+        ranked.status
+
+    FROM (
+
+        SELECT
+            LPAD(
+                TRIM(CAST(d.sap_code AS CHAR)),
+                10, '0'
+            ) AS dealer_key,
+
+            d.sap_code,
+            d.store_name_crm,
+            d.store_name,
+            d.store_code,
+            d.dealer_group,
+            d.brand,
+            d.status,
+
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    LPAD(
+                        TRIM(CAST(d.sap_code AS CHAR)),
+                        10, '0'
+                    )
+                ORDER BY
+
+                    CASE TRIM(d.status)
+                        WHEN 'DN' THEN 1
+                        WHEN 'OLD' THEN 2
+                        WHEN 'Pending' THEN 3
+                        WHEN 'Pátio' THEN 4
+                        WHEN 'Yard' THEN 5
+                        WHEN 'Store' THEN 6
+                        ELSE 99
+                    END,
+
+                    -- Desempate determinístico
+                    COALESCE(TRIM(d.store_name_crm), ''),
+                    COALESCE(TRIM(d.store_name), ''),
+                    COALESCE(TRIM(d.dealer_group), ''),
+                    d.sap_code
+
+            ) AS rn
+
+        FROM bronze.mapping_dealer_expansion AS d
+
+        WHERE d.sap_code IS NOT NULL
+          AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
+
+    ) AS ranked
+
+    WHERE ranked.rn = 1;
+
+
+    -- ========================================================
     -- 2.1 CONTAGEM DE MATCHES NO CRM
     -- ========================================================
 
     SELECT COUNT(*)
     INTO v_dealer_match
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
-    WHERE g.record_source = 'ZSDBIL17_CURRENT'
-      AND EXISTS (
-          SELECT 1
-          FROM bronze.mapping_dealer_expansion AS d
-          WHERE d.sap_code IS NOT NULL
-            AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
-            AND LPAD(
-                    TRIM(CAST(g.ship_to_party_code AS CHAR)),
-                    10, '0'
-                ) =
-                LPAD(
-                    TRIM(CAST(d.sap_code AS CHAR)),
-                    10, '0'
-                )
-      );
+    INNER JOIN tmp_z17_dealer_map AS d
+        ON d.dealer_key = LPAD(
+            TRIM(g.ship_to_party_code),
+            10, '0'
+        )
+    WHERE g.record_source = 'ZSDBIL17_CURRENT';
+
+
+    -- ========================================================
+    -- 2.1.1 FALLBACK BYD INTERNAL (TEMPORÁRIA COM ÍNDICE)
+    -- ========================================================
+    /*
+    Mesma regra de antes (ver comentário do JOIN abaixo), agora
+    calculada uma vez numa temporária com PRIMARY KEY no CNPJ
+    normalizado. O CNPJ normalizado só tem dígitos, então a
+    comparação pela collation da Gold dá o mesmo resultado que a
+    comparação BINARY usada antes.
+    */
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_plant_fallback;
+
+    CREATE TEMPORARY TABLE tmp_z17_plant_fallback (
+        cnpj_normalizado VARCHAR(14)
+            CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+        dealer_fallback VARCHAR(100)
+            CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
+        PRIMARY KEY (cnpj_normalizado)
+    ) ENGINE = InnoDB;
+
+    INSERT INTO tmp_z17_plant_fallback (
+        cnpj_normalizado,
+        dealer_fallback
+    )
+    SELECT
+        REGEXP_REPLACE(
+            CAST(branch_cnpj AS CHAR),
+            '[^0-9]', ''
+        ) AS cnpj_normalizado,
+
+        MAX(TRIM(dealer_fallback)) AS dealer_fallback
+
+    FROM bp_datalake.dim_plant
+
+    WHERE CHAR_LENGTH(
+        REGEXP_REPLACE(
+            CAST(branch_cnpj AS CHAR),
+            '[^0-9]', ''
+        )
+    ) = 14
+
+      AND NULLIF(
+          NULLIF(TRIM(dealer_fallback), ''),
+          '-'
+      ) IS NOT NULL
+
+    GROUP BY
+        REGEXP_REPLACE(
+            CAST(branch_cnpj AS CHAR),
+            '[^0-9]', ''
+        )
+
+    HAVING COUNT(DISTINCT TRIM(dealer_fallback)) = 1;
 
 
     -- ========================================================
@@ -163,66 +337,10 @@ BEGIN
     -- MAPEAMENTO PRINCIPAL DO CRM
     -- --------------------------------------------------------
 
-    LEFT JOIN (
+    LEFT JOIN tmp_z17_dealer_map AS d
 
-        SELECT
-            ranked.sap_code,
-            ranked.store_name_crm,
-            ranked.store_name,
-            ranked.store_code,
-            ranked.dealer_group,
-            ranked.brand,
-            ranked.status
-
-        FROM (
-
-            SELECT
-                d.sap_code,
-                d.store_name_crm,
-                d.store_name,
-                d.store_code,
-                d.dealer_group,
-                d.brand,
-                d.status,
-
-                ROW_NUMBER() OVER (
-                    PARTITION BY d.sap_code
-                    ORDER BY
-
-                        CASE TRIM(d.status)
-                            WHEN 'DN' THEN 1
-                            WHEN 'OLD' THEN 2
-                            WHEN 'Pending' THEN 3
-                            WHEN 'Pátio' THEN 4
-                            WHEN 'Yard' THEN 5
-                            WHEN 'Store' THEN 6
-                            ELSE 99
-                        END,
-
-                        -- Desempate determinístico
-                        COALESCE(TRIM(d.store_name_crm), ''),
-                        COALESCE(TRIM(d.store_name), ''),
-                        COALESCE(TRIM(d.dealer_group), '')
-
-                ) AS rn
-
-            FROM bronze.mapping_dealer_expansion AS d
-
-            WHERE d.sap_code IS NOT NULL
-              AND TRIM(CAST(d.sap_code AS CHAR)) <> ''
-
-        ) AS ranked
-
-        WHERE ranked.rn = 1
-
-    ) AS d
-
-        ON LPAD(
-            TRIM(CAST(g.ship_to_party_code AS CHAR)),
-            10, '0'
-        ) =
-        LPAD(
-            TRIM(CAST(d.sap_code AS CHAR)),
+        ON d.dealer_key = LPAD(
+            TRIM(g.ship_to_party_code),
             10, '0'
         )
 
@@ -243,43 +361,10 @@ BEGIN
     correspondência no mapeamento principal do CRM.
     */
 
-    LEFT JOIN (
+    LEFT JOIN tmp_z17_plant_fallback AS p
 
-        SELECT
-            REGEXP_REPLACE(
-                CAST(branch_cnpj AS CHAR),
-                '[^0-9]', ''
-            ) AS cnpj_normalizado,
-
-            MAX(TRIM(dealer_fallback)) AS dealer_fallback
-
-        FROM bp_datalake.dim_plant
-
-        WHERE CHAR_LENGTH(
-            REGEXP_REPLACE(
-                CAST(branch_cnpj AS CHAR),
-                '[^0-9]', ''
-            )
-        ) = 14
-
-          AND NULLIF(
-              NULLIF(TRIM(dealer_fallback), ''),
-              '-'
-          ) IS NOT NULL
-
-        GROUP BY
-            REGEXP_REPLACE(
-                CAST(branch_cnpj AS CHAR),
-                '[^0-9]', ''
-            )
-
-        HAVING COUNT(DISTINCT TRIM(dealer_fallback)) = 1
-
-    ) AS p
-
-        ON BINARY p.cnpj_normalizado =
-           BINARY REGEXP_REPLACE(
-               CAST(g.ship_to_party_cnpj AS CHAR),
+        ON p.cnpj_normalizado = REGEXP_REPLACE(
+               g.ship_to_party_cnpj,
                '[^0-9]', ''
            )
 
@@ -487,6 +572,9 @@ BEGIN
 
     SET v_dealer_updated = ROW_COUNT();
 
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_dealer_map;
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_plant_fallback;
+
 
     /*
     ============================================================
@@ -507,25 +595,51 @@ BEGIN
 
 
     -- ========================================================
+    -- 3.0 MAPA DA CONDIÇÃO DE PAGAMENTO (TEMPORÁRIA COM ÍNDICE)
+    -- ========================================================
+    /*
+    A dimensão com a chave já sem espaços e PRIMARY KEY. Não há
+    duas linhas com a mesma chave depois do TRIM (0 casos em
+    23/11/2026); se aparecer, a carga falha na PRIMARY KEY em vez
+    de escolher uma das linhas em silêncio.
+    */
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_payment_map;
+
+    CREATE TEMPORARY TABLE tmp_z17_payment_map (
+        cond_pgto_sap VARCHAR(50)
+            CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+        payment_term_description_bp TEXT NULL,
+        PRIMARY KEY (cond_pgto_sap)
+    ) ENGINE = InnoDB;
+
+    INSERT INTO tmp_z17_payment_map (
+        cond_pgto_sap,
+        payment_term_description_bp
+    )
+    SELECT
+        TRIM(d.cond_pgto_sap),
+        d.payment_term_description_bp
+    FROM bp_datalake.dim_cond_pagamento AS d
+    WHERE d.cond_pgto_sap IS NOT NULL;
+
+
+    -- ========================================================
     -- 3.1 MATCHES VÁLIDOS
     -- ========================================================
 
     SELECT COUNT(*)
     INTO v_payment_match
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
-    WHERE EXISTS (
-        SELECT 1
-        FROM bp_datalake.dim_cond_pagamento AS d
+    INNER JOIN tmp_z17_payment_map AS d
+        ON d.cond_pgto_sap = TRIM(g.payment_condition)
+    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025')
 
-        WHERE TRIM(g.payment_condition) =
-              TRIM(d.cond_pgto_sap)
+      AND NULLIF(
+          TRIM(d.payment_term_description_bp), ''
+      ) IS NOT NULL
 
-          AND NULLIF(
-              TRIM(d.payment_term_description_bp), ''
-          ) IS NOT NULL
-
-          AND TRIM(d.payment_term_description_bp) <> '-'
-    );
+      AND TRIM(d.payment_term_description_bp) <> '-';
 
 
     -- ========================================================
@@ -534,10 +648,9 @@ BEGIN
 
     UPDATE bp_datalake.gold_zsdbil17_faturamento AS g
 
-    LEFT JOIN bp_datalake.dim_cond_pagamento AS d
+    LEFT JOIN tmp_z17_payment_map AS d
 
-        ON TRIM(g.payment_condition) =
-           TRIM(d.cond_pgto_sap)
+        ON d.cond_pgto_sap = TRIM(g.payment_condition)
 
     SET
         g.payment_condition_description_dim =
@@ -563,7 +676,12 @@ BEGIN
 
             END
 
-    WHERE NOT (
+    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025')
+    -- Legacy fora (ADR-050): até 23/11/2026 o Legacy só entrava
+    -- na Gold depois desta procedure; agora ele fica na tabela.
+    -- O filtro mantém o resultado de antes. <=> trata NULL.
+
+      AND NOT (
 
         g.payment_condition_description_dim <=>
 
@@ -593,6 +711,8 @@ BEGIN
 
     SET v_payment_updated = ROW_COUNT();
 
+    DROP TEMPORARY TABLE IF EXISTS tmp_z17_payment_map;
+
 
     /*
     ============================================================
@@ -619,7 +739,8 @@ BEGIN
     SELECT COUNT(*)
     INTO v_plant_match
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
-    WHERE EXISTS (
+    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025')
+      AND EXISTS (
         SELECT 1
         FROM bp_datalake.dim_plant AS d
 
@@ -669,7 +790,12 @@ BEGIN
 
             END
 
-    WHERE NOT (
+    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025')
+    -- Legacy fora (ADR-050): até 23/11/2026 o Legacy só entrava
+    -- na Gold depois desta procedure; agora ele fica na tabela.
+    -- O filtro mantém o resultado de antes. <=> trata NULL.
+
+      AND NOT (
 
         g.plant_description <=>
 
@@ -738,7 +864,12 @@ BEGIN
 
             END
 
-    WHERE NOT (
+    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025')
+    -- Legacy fora (ADR-050): até 23/11/2026 o Legacy só entrava
+    -- na Gold depois desta procedure; agora ele fica na tabela.
+    -- O filtro mantém o resultado de antes. <=> trata NULL.
+
+      AND NOT (
 
         g.origem_chassi <=>
 
@@ -777,7 +908,8 @@ BEGIN
         v_origem_nacional,
         v_origem_unknown
 
-    FROM bp_datalake.gold_zsdbil17_faturamento;
+    FROM bp_datalake.gold_zsdbil17_faturamento
+    WHERE NOT (record_source <=> 'LEGACY_2024_2025');
 
 
     -- ========================================================
