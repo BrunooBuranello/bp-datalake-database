@@ -24,36 +24,6 @@ REGRAS:
 - record_source = 'LEGACY_2024_2025'
 - Reexecução não duplica registros
 
-DESDE 23/11/2026 (ADR-050 do sap_service):
-
-O Legacy fica na Gold entre as execuções (o load_base apaga
-só as linhas atuais e tira do Legacy o chassi que ganhou NF
-atual). Esta procedure só insere o Legacy dos chassis que
-estão SEM linha na Gold: primeira carga, chassi que perdeu a
-NF atual (cancelada, chave inválida...) ou linha apagada pelo
-cancelamento manual. Numa hora normal insere zero linhas.
-
-O filtro "chassi sem linha na Gold" vem ANTES do ranking. Ele
-vale para o chassi inteiro (todas as NFs dele), então a NF
-escolhida para cada chassi é a mesma de antes; só deixa de
-ranquear ~239 mil linhas toda hora (era 1 a 3 min).
-
-CUIDADO: como o Legacy não é mais regravado toda hora, uma
-correção feita na silver_invoiced_legacy_2024_2025 só chega
-à Gold depois de recarregar o Legacy (OPERATIONS no README do
-05_bp_datalake_database):
-
-    DELETE FROM bp_datalake.gold_zsdbil17_faturamento
-    WHERE record_source = 'LEGACY_2024_2025';
-    CALL bp_datalake.sp_gold_z17_append_legacy_2024_2025();
-    CALL bp_datalake.sp_gold_z17_enrich_model();
-    CALL bp_datalake.sp_z17_apply_manual_cancellation();
-
-Métricas no etl_execution_log: inserted_rows = Legacy
-devolvido nesta execução; rejected_rows = linhas do Legacy não
-inseridas (chassi já na Gold ou NF não vencedora);
-audit_details.legacy_rows_in_gold = total do Legacy na Gold.
-
 Desempate Legacy:
 1. issuance_date DESC
 2. dt_carga DESC
@@ -92,7 +62,6 @@ BEGIN
 
     DECLARE v_duplicate_legacy BIGINT DEFAULT 0;
     DECLARE v_overlap_current BIGINT DEFAULT 0;
-    DECLARE v_legacy_rows_in_gold BIGINT DEFAULT 0;
 
     DECLARE v_sqlstate CHAR(5) DEFAULT NULL;
     DECLARE v_mysql_errno INT DEFAULT NULL;
@@ -295,37 +264,30 @@ BEGIN
 
             AND l.cfop_car = 'YES'
 
-            /*
-            Só chassi SEM linha na Gold (atual ou Legacy), antes
-            do ranking (ver cabeçalho, ADR-050).
-
-            A Gold grava o chassi com TRIM e tem PRIMARY KEY nele:
-            só o lado do Legacy é convertido para a collation da
-            Gold, e cada linha do Legacy acha (ou não) o chassi
-            pela chave. Antes o TRIM/COLLATE ficava do lado da
-            Gold e impedia o índice.
-            */
-            AND NOT EXISTS (
-
-                SELECT 1
-
-                FROM
-                    bp_datalake.gold_zsdbil17_faturamento AS g
-
-                WHERE
-                    g.chassis_serial_number =
-                        CONVERT(
-                            TRIM(l.chassis_serial_number)
-                            USING utf8mb4
-                        ) COLLATE utf8mb4_0900_ai_ci
-
-            )
-
     ) AS ranked
 
     WHERE
 
-        ranked.numero_linha = 1;
+        ranked.numero_linha = 1
+
+        AND NOT EXISTS (
+
+            SELECT 1
+
+            FROM
+                bp_datalake.gold_zsdbil17_faturamento AS g
+
+            WHERE
+
+                TRIM(g.chassis_serial_number)
+                    COLLATE utf8mb4_unicode_ci
+
+                =
+
+                ranked.chassis_serial_number
+                    COLLATE utf8mb4_unicode_ci
+
+        );
 
 
     /*
@@ -940,11 +902,14 @@ BEGIN
     INNER JOIN
         bp_datalake.gold_zsdbil17_faturamento AS current_data
 
-        -- Gold grava o chassi com TRIM: a igualdade direta usa
-        -- a PRIMARY KEY (ADR-050).
         ON
-            current_data.chassis_serial_number =
-                legacy.chassis_serial_number
+            TRIM(legacy.chassis_serial_number)
+                COLLATE utf8mb4_unicode_ci
+
+            =
+
+            TRIM(current_data.chassis_serial_number)
+                COLLATE utf8mb4_unicode_ci
 
     WHERE
         legacy.record_source = 'LEGACY_2024_2025'
@@ -960,16 +925,6 @@ BEGIN
             'Append Legacy bloqueado: chassis Legacy também encontrados no CURRENT.';
 
     END IF;
-
-
-    SELECT COUNT(*)
-    INTO v_legacy_rows_in_gold
-
-    FROM
-        bp_datalake.gold_zsdbil17_faturamento
-
-    WHERE
-        record_source = 'LEGACY_2024_2025';
 
 
     /*
@@ -1022,10 +977,6 @@ BEGIN
 
         error_message = NULL,
 
-        audit_details = JSON_OBJECT(
-            'legacy_rows_in_gold', v_legacy_rows_in_gold
-        ),
-
         execution_duration_seconds =
             TIMESTAMPDIFF(
                 SECOND,
@@ -1066,8 +1017,16 @@ BEGIN
         v_overlap_current
             AS overlap_current_chassis,
 
-        v_legacy_rows_in_gold
-            AS total_legacy_gold,
+        (
+            SELECT COUNT(*)
+
+            FROM
+                bp_datalake.gold_zsdbil17_faturamento
+
+            WHERE
+                record_source = 'LEGACY_2024_2025'
+
+        ) AS total_legacy_gold,
 
         (
             SELECT COUNT(*)

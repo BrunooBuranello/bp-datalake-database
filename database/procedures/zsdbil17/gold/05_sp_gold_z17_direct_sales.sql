@@ -191,15 +191,7 @@ BEGIN
 
     - division diferente de 00, B1 e B2;
     - faturamentos do ano corrente;
-    - somente datas até hoje;
-    - nunca linhas do Legacy 2024/2025 (ADR-050 do sap_service).
-
-    Por que o filtro do Legacy: até 23/11/2026 o Legacy só
-    entrava na Gold depois desta procedure. Agora ele fica na
-    tabela, e o id_bronze do Legacy é o id da planilha histórica,
-    que repete números do id_bronze atual (24.079 casos em
-    23/11/2026). Sem o filtro, os UPDATEs por id_bronze abaixo
-    poderiam gravar pedido Direct Sales numa linha do Legacy.
+    - somente datas até hoje.
     ===========================================================================
     */
 
@@ -214,9 +206,7 @@ BEGIN
 
     FROM bp_datalake.gold_zsdbil17_faturamento AS g
 
-    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025')
-
-      AND g.division NOT IN ('00', 'B1', 'B2')
+    WHERE g.division NOT IN ('00', 'B1', 'B2')
 
       AND g.issuance_date >= MAKEDATE(
             YEAR(CURDATE()),
@@ -268,13 +258,9 @@ BEGIN
         g.order_status = NULL
 
     WHERE
-        -- id_bronze do Legacy repete números do atual (ver seção 5).
-        NOT (g.record_source <=> 'LEGACY_2024_2025')
-        AND (
-            g.order_no IS NOT NULL
-            OR g.order_car_no IS NOT NULL
-            OR g.order_status IS NOT NULL
-        );
+        g.order_no IS NOT NULL 
+        OR g.order_car_no IS NOT NULL
+        OR g.order_status IS NOT NULL;
 
     /*
     ===========================================================================
@@ -518,10 +504,7 @@ BEGIN
     SET
         g.order_no = r.order_no,
         g.order_car_no = r.order_car_no,
-        g.order_status = r.order_status
-
-    -- id_bronze do Legacy repete números do atual (ver seção 5).
-    WHERE NOT (g.record_source <=> 'LEGACY_2024_2025');
+        g.order_status = r.order_status;
 
 
     /*

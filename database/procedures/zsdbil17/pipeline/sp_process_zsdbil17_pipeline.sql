@@ -425,11 +425,6 @@ BEGIN
     A procedure Legacy é APPEND ONLY e não altera registros
     CURRENT já existentes na Gold.
 
-    Desde 23/11/2026 (ADR-050) o Legacy fica na Gold entre as
-    execuções: o load_base apaga só as linhas atuais, e esta
-    etapa só devolve o Legacy dos chassis sem linha na Gold
-    (numa hora normal, nenhum).
-
     =========================================================
     */
 

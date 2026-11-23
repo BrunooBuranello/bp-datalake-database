@@ -163,10 +163,8 @@ valor digitado pelo usuário precisa ser completado antes da comparação.
 
 Legado 2024/2025 (`silver_invoiced_legacy_2024_2025`): desde 06/11/2026 a NF
 também tem 9 dígitos (`zsdbil17_legacy/03_update_silver_invoiced_legacy_invoice_padding.sql`
-corrigiu a tabela; a `01` já grava assim numa recarga). Desde 23/11/2026 o
-legado não é mais regravado na Gold toda hora (ADR-050, seção "Desempenho da
-pipeline Z17"): correção na tabela do legado só chega à Gold depois da
-recarga do legado descrita lá. Ainda diferente da Z17 no legado
+corrigiu a tabela; a `01` já grava assim numa recarga). A Gold recebe o formato
+na carga seguinte, pelo append do legado. Ainda diferente da Z17 no legado
 (fica para um ADR próprio): `issuance_date` e `plant_code` são `TEXT`, a
 collation é `utf8mb4_unicode_ci` e `byd_cnpj_number` vem vazio. Consulta que
 junte as duas origens precisa converter tipo e collation, e conversão no
@@ -346,24 +344,12 @@ podem ficar.
 ## Desempenho da pipeline Z17 (ADR-050, 23/11/2026)
 
 Decisão completa: ADR-050 de `sap_service/docs/DECISIONS.md` (projeto
-`01_sap-service`). Medido em 23/11/2026: a pipeline levava 17 a 42 min por
-hora; o tempo estava em JOINs que não usavam índice e em regravar o legado.
-
-Arquivos alterados:
+`01_sap-service`). Em produção desde 23/11/2026 (17:07), duas mudanças:
 
 ```text
 database/procedures/zsdbil17/pipeline/sp_process_zsdbil17_pipeline.sql
-database/procedures/zsdbil17/silver/06_sp_silver_z17_sales_type.sql
-database/procedures/zsdbil17/gold/02_sp_gold_z17_load_base.sql
-database/procedures/zsdbil17/gold/03_sp_gold_z17_sales_type.sql
-database/procedures/zsdbil17/gold/04_sp_gold_z17_enrich.sql
-database/procedures/zsdbil17/gold/05_sp_gold_z17_direct_sales.sql
 database/procedures/zsdbil17/gold/06_sp_gold_z17_enrich_model.sql
-database/procedures/zsdbil17/zsdbil17_legacy/02_sp_gold_z17_append_legacy_2024_2025.sql
-database/procedures/zsdbil17/pipeline/validate_z17_pipeline_perf_20261123.sql
 ```
-
-O que mudou:
 
 1. **Tempo de todas as etapas.** As 5 etapas sem log próprio
    (`sp_silver_z17_sales_type`, `sp_silver_z17_vehicle_type`,
@@ -371,53 +357,21 @@ O que mudou:
    `sp_gold_z17_enrich`) ganham uma linha no `etl_execution_log`, gravada pela
    própria pipeline (`audit_details.logged_by = 'sp_process_zsdbil17_pipeline'`).
    Sem `CALL` auxiliar, para não mudar a contagem "Procedure N/T" do app.
-2. **JOIN com índice.** Modelo (`enrich_model`), dealer do CRM, fallback BYD
-   Internal e condição de pagamento (`enrich`) viram temporárias pequenas com
-   PRIMARY KEY na chave já normalizada; a Gold é lida uma vez e acha o par
-   pela chave. Antes, `TRIM`/`CAST`/`LPAD`/`REGEXP` dos dois lados faziam cada
-   linha da Gold ser comparada com cada linha da dimensão (só o modelo levava
-   3 a 6 min). Do lado da Gold a coluna entra sem `CAST`, que usaria a
-   collation da conexão e desligaria o índice. A Silver `sales_type` só grava
-   a linha que muda (comparação exata, `utf8mb4_bin`). Resultado conferido
-   igual ao antigo em 23/11/2026 (0 valores diferentes).
-3. **Legado fica na Gold.** O `load_base` apaga só o que não é legado e tira
-   do legado o chassi que ganhou NF atual elegível (o atual sempre teve
-   prioridade). A procedure do legado só devolve o legado dos chassis sem
-   linha na Gold (primeira carga, chassi que perdeu a NF atual, linha apagada
-   pelo cancelamento manual) e ranqueia só esses. `sales_type`, `enrich` e
-   `direct_sales` filtram `NOT (record_source <=> 'LEGACY_2024_2025')`, porque
-   antes nunca viam o legado (ele entrava depois). No `direct_sales` isso é
-   obrigatório: o `id_bronze` do legado repete números do atual (24.079 casos).
+2. **Modelo pelo índice.** O `enrich_model` monta uma temporária do Material
+   Code com PRIMARY KEY no código e a Gold acha o modelo pela chave, em vez de
+   `CONVERT/TRIM/CAST` dos dois lados do JOIN. Medido na pipeline: 4min20s →
+   43s, mesmo resultado.
 
-### Operação: recarregar o legado
+Testado e **não adotado** (voltou à versão do commit `bc7037d`): manter o
+legado na Gold entre as cargas, com filtro de legado no `sales_type`,
+`enrich` e `direct_sales`, e as temporárias com índice do `enrich`
+(dealer, fallback BYD Internal, pagamento). Com o legado dentro da Gold essas
+etapas passaram a ler o dobro de linhas e a pipeline foi de 29 para 46 min
+(medido em 23/11/2026; detalhes no ADR-050).
 
-Depois de corrigir a `silver_invoiced_legacy_2024_2025` (ex.: o script `03`
-do legado), a Gold não recebe a correção sozinha. Com a fila SAP parada:
-
-```sql
-DELETE FROM bp_datalake.gold_zsdbil17_faturamento
-WHERE record_source = 'LEGACY_2024_2025';
-
-CALL bp_datalake.sp_gold_z17_append_legacy_2024_2025();
-CALL bp_datalake.sp_gold_z17_enrich_model();
-CALL bp_datalake.sp_z17_apply_manual_cancellation();
-```
-
-### Implantação e rollback
-
-Na janela de deploy (fila SAP sem itens, orquestrador desligado):
-
-1. rodar a pipeline **antiga** uma vez e copiar a Gold
-   (`validate_z17_pipeline_perf_20261123.sql`, parte A);
-2. recriar as 8 procedures da lista acima (qualquer ordem; nenhum DDL de
-   tabela);
-3. rodar a pipeline nova uma vez sobre a mesma staging;
-4. conferir as partes B (tem que dar 0, 0 e 0) e C (tempos) do script.
-
-Rollback: recriar as 8 procedures a partir da `main` anterior (commit
-`bc7037d`). Não há dado a desfazer: a pipeline antiga apaga a Gold inteira e
-regrava o legado na execução seguinte. A cópia da parte A fica alguns dias e
-depois é apagada (parte D, com confirmação).
+Conferência usada no deploy: `pipeline/validate_z17_pipeline_perf_20261123.sql`
+(cópia da Gold depois da pipeline antiga + diferença linha a linha + tempos).
+Rollback: recriar as 2 procedures a partir do commit `bc7037d`.
 
 ## Silver
 

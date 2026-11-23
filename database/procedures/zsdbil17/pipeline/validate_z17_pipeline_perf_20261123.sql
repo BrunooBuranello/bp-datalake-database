@@ -11,6 +11,13 @@ Provar, na janela de deploy, que as procedures novas (itens 0,
 1 e 2 do ADR-050 do sap_service) deixam a Gold IGUAL à das
 procedures antigas, e medir o tempo de cada etapa.
 
+Resultado (23/11/2026): Gold igual (139 diferenças só de dado de
+origem: order_status atualizado pelo CRM entre as rodadas e
+id_bronze das NFs do dia regravadas pela reconciliação). Tempo:
+29 min (antiga) x 46 min (nova). Ficaram só a pipeline e o
+enrich_model; as outras 6 voltaram ao commit bc7037d (README,
+seção "Desempenho da pipeline Z17").
+
 Como (rodar em partes, na ordem, com a fila SAP parada e o
 orquestrador desligado):
 

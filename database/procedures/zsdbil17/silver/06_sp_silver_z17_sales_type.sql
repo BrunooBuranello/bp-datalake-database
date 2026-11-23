@@ -93,14 +93,6 @@ BEGIN
 
     Importante:
     division_description original do SAP não é alterada.
-
-    Só grava a linha cujo valor muda (23/11/2026, ADR-050 do
-    sap_service). Antes o UPDATE passava por todas as linhas da
-    Silver (~1,4 milhão) toda hora e travava cada uma, mesmo sem
-    mudar nada (medido: 0 linhas diferentes numa hora normal).
-    A comparação é em utf8mb4_bin (exata): uma troca só de
-    maiúscula/minúscula na dimensão continua sendo gravada, como
-    antes. <=> trata NULL.
     ============================================================
     */
 
@@ -124,23 +116,7 @@ BEGIN
                     ''
                 ),
                 'UNKNOWN'
-            )
-
-    WHERE NOT (
-        s.division_description_enriched COLLATE utf8mb4_bin
-        <=>
-        COALESCE(
-            NULLIF(
-                TRIM(d_sales.sales_order_type_description),
-                ''
-            ),
-            NULLIF(
-                TRIM(d_cfop.sales_type),
-                ''
-            ),
-            'UNKNOWN'
-        ) COLLATE utf8mb4_bin
-    );
+            );
 
 
     /*
