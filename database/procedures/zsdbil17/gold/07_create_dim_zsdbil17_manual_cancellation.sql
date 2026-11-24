@@ -32,7 +32,8 @@
 --    recusa). Uma NF nova do mesmo chassi nunca casa e volta para
 --    a Gold normalmente.
 -- 2. Nunca apagar linha: para desfazer, o app grava active = 0
---    (com deactivated_by / deactivated_at) e a próxima carga
+--    (com deactivated_by / deactivated_at e o motivo em
+--    deactivation_reason, ADR-007) e a próxima carga
 --    devolve a NF para a Gold. Registrar de novo a mesma NF
 --    reativa a linha (active = 1).
 -- 3. Toda mudança gera linha na tabela de auditoria abaixo,
@@ -83,6 +84,11 @@ CREATE TABLE IF NOT EXISTS bp_datalake.dim_zsdbil17_manual_cancellation (
 
     deactivated_by VARCHAR(150) NULL,
     deactivated_at DATETIME NULL,
+
+    -- Motivo informado no app ao desativar (obrigatório na tela;
+    -- ADR-007). Volta a NULL na reativação. Em produção entrou
+    -- pelo 13_alter_..._reason.sql.
+    deactivation_reason VARCHAR(500) NULL,
 
     PRIMARY KEY (id),
 
@@ -163,6 +169,9 @@ CREATE TABLE IF NOT EXISTS bp_datalake.dim_zsdbil17_manual_cancellation_audit_hi
     changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     request_id CHAR(36) NOT NULL,
+
+    -- Motivo da desativação (só linhas DEACTIVATE; ADR-007).
+    reason VARCHAR(500) NULL,
 
     PRIMARY KEY (id),
 

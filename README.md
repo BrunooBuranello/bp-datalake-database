@@ -209,6 +209,7 @@ Arquivos:
 database/procedures/zsdbil17/gold/07_create_dim_zsdbil17_manual_cancellation.sql
 database/procedures/zsdbil17/gold/08_sp_z17_apply_manual_cancellation.sql
 database/procedures/zsdbil17/gold/09_alter_dim_zsdbil17_manual_cancellation_key.sql
+database/procedures/zsdbil17/gold/13_alter_dim_zsdbil17_manual_cancellation_reason.sql
 ```
 
 Enquanto os cancelamentos não forem estruturados, o time de BP registra no app
@@ -232,7 +233,8 @@ Regras:
 - chave = chassi + NF + data + planta (seção acima); NF nova do mesmo chassi
   entra na Gold normalmente;
 - sem fallback: a NF anterior do chassi não volta para a Gold;
-- `active = 0` (desativar no app) devolve a NF na execução seguinte;
+- `active = 0` (desativar no app) devolve a NF na execução seguinte; o app
+  exige o motivo (`deactivation_reason`, e `reason` na auditoria; arquivo 13);
 - em erro: ROLLBACK, `ERROR` no `etl_execution_log`, e a pipeline **continua**;
 - independente: remover o `CALL` da pipeline desliga o paliativo.
 - **Limite conhecido:** o DEMO History lê a Silver e não usa estas colunas.
